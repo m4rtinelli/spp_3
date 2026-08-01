@@ -199,6 +199,39 @@ input[type=color] {
   margin: -4px 0 10px;
 }
 
+/* ── Layer list ──────────────────────────── */
+.layer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  user-select: none;
+}
+.layer-row:hover { border-color: #3a4048; }
+.layer-row.active { border-color: var(--accent); }
+.layer-row.off .layer-name { opacity: .4; text-decoration: line-through; }
+.layer-row .sw {
+  width: 14px; height: 14px;
+  border-radius: 4px;
+  border: 1px solid rgba(255,255,255,.25);
+  flex: 0 0 auto;
+}
+.layer-row .layer-name { flex: 1; font-size: 12px; font-weight: 600; }
+.lyr-ind {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: #111;
+  font-size: 9px;
+  letter-spacing: 0;
+}
+
 /* ── Effector cards ──────────────────────── */
 .fx-card {
   background: var(--panel-2);

@@ -34,37 +34,32 @@
             <option value="1.5">3 : 2</option>
           </select>
         </div>
-        <div class="row">
-          <div class="ctl">
-            <label>Background</label>
-            <input type="color" id="bgColor" value="#ffffff">
-          </div>
-          <div class="ctl">
-            <label>Shape</label>
-            <input type="color" id="fgColor" value="#000000">
-          </div>
+        <div class="ctl">
+          <label>Background</label>
+          <input type="color" id="bgColor" value="#ffffff">
         </div>
-        <label class="check"><input type="checkbox" id="swapColors"> Swap colors</label>
-      </div>
-    </details>
-
-    <details class="section" open>
-      <summary>Grid</summary>
-      <div class="section-body">
         <div class="ctl">
           <label>Columns <span class="val" id="v-cols">18</span></label>
           <input type="range" id="cols" min="2" max="60" step="1" value="18">
         </div>
-        <div class="ctl">
-          <label>Cell padding <span class="val" id="v-pad">0%</span></label>
-          <input type="range" id="pad" min="0" max="40" step="1" value="0">
-        </div>
-        <label class="check"><input type="checkbox" id="checker"> Checkerboard flip</label>
       </div>
     </details>
 
     <details class="section" open>
-      <summary>Shape</summary>
+      <summary>Layers</summary>
+      <div class="section-body">
+        <div id="layerList"></div>
+        <button id="addLayer" style="width:100%; margin-bottom:12px; border-style:dashed; color:var(--text-dim)">＋ Add layer</button>
+        <div class="ctl">
+          <label>Layer color</label>
+          <input type="color" id="fgColor" value="#000000">
+        </div>
+        <p class="hint">The sections below edit the selected layer</p>
+      </div>
+    </details>
+
+    <details class="section" open>
+      <summary>Shape <span class="lyr-ind"></span></summary>
       <div class="section-body">
         <div class="seg" id="shapePicker"></div>
         <p class="hint">Ctrl+click to combine shapes — the mix is placed randomly across the grid</p>
@@ -75,11 +70,16 @@
           <label>Shape scale <span class="val" id="v-shapeScale">100%</span></label>
           <input type="range" id="shapeScale" min="20" max="150" step="1" value="100">
         </div>
+        <div class="ctl">
+          <label>Cell padding <span class="val" id="v-pad">0%</span></label>
+          <input type="range" id="pad" min="0" max="40" step="1" value="0">
+        </div>
+        <label class="check"><input type="checkbox" id="checker"> Checkerboard flip</label>
       </div>
     </details>
 
     <details class="section" open>
-      <summary>Motion</summary>
+      <summary>Motion <span class="lyr-ind"></span></summary>
       <div class="section-body">
         <div class="ctl">
           <label>Speed <span class="val" id="v-speed">0.25</span></label>
@@ -116,7 +116,7 @@
     </details>
 
     <details class="section" open>
-      <summary>Delay / Wave</summary>
+      <summary>Delay / Wave <span class="lyr-ind"></span></summary>
       <div class="section-body">
         <div class="ctl">
           <label>Delay pattern</label>

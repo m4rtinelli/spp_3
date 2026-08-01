@@ -1,30 +1,46 @@
-﻿"use strict";
+"use strict";
 
-/* ═══════════════════════ State ═══════════════════════ */
+/* ═══════════════════════ Global settings ═══════════════════════ */
 
-const P = {
+const G = {
   aspect: 1,
   bg: "#ffffff",
-  fg: "#000000",
-  swap: false,
   cols: 18,
-  pad: 0,
-  checker: false,
-  shapes: ["triangle"], // selected shapes; >1 = random mix across the grid
-  shapeScale: 1,
-  speed: 0.25,
-  wave: "sine",
-  rot: 0.5,          // turns
-  scaleAmt: 0,       // 0..1
-  quant: 0,          // rotation steps (0 = off)
-  delayPattern: "diagonal",
-  delayAmt: 1,       // cycles
-  mirrorDelay: false,
   showFx: true,
   tintSvg: true,
 };
 
-let currentFg = "#000000"; // resolved shape color, used to tint custom SVGs
+/* ═══════════════════════ Layers ═══════════════════════ */
+/* Each layer has its own shapes, color, motion and delay parameters */
+
+const LAYER_COLORS = ["#000000", "#e8382f", "#2653d9", "#0c9e6e", "#f2a11c", "#9b3fd1"];
+let layerCounter = 0;
+
+function makeLayer() {
+  return {
+    id: ++layerCounter,
+    visible: true,
+    shapes: ["triangle"], // >1 = random mix across the grid
+    fg: LAYER_COLORS[(layerCounter - 1) % LAYER_COLORS.length],
+    shapeScale: 1,
+    pad: 0,
+    checker: false,
+    speed: 0.25,
+    wave: "sine",
+    rot: 0.5,          // turns
+    scaleAmt: 0,       // 0..1
+    quant: 0,          // rotation steps (0 = off)
+    delayPattern: "diagonal",
+    delayAmt: 1,       // cycles
+    mirrorDelay: false,
+  };
+}
+
+let layers = [makeLayer()];
+let activeLayer = 0;
+const activeL = () => layers[activeLayer];
+
+let currentFg = "#000000"; // color of the layer being drawn, used to tint custom SVGs
 
 let effectors = [];
 let fxCounter = 0;
@@ -43,8 +59,8 @@ const stage = document.getElementById("stage");
 function fitCanvas() {
   const availW = stage.clientWidth - 56;
   const availH = stage.clientHeight - 56;
-  let w = availW, h = w / P.aspect;
-  if (h > availH) { h = availH; w = h * P.aspect; }
+  let w = availW, h = w / G.aspect;
+  if (h > availH) { h = availH; w = h * G.aspect; }
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   cv.width = Math.round(w * dpr);
   cv.height = Math.round(h * dpr);
@@ -120,11 +136,11 @@ function hash2(i, j) {
   return ((h ^ (h >> 16)) >>> 0) / 4294967295;
 }
 
-function cellDelay(i, j, cols, rows) {
+function cellDelay(ly, i, j, cols, rows) {
   const u = cols > 1 ? i / (cols - 1) : 0.5;
   const v = rows > 1 ? j / (rows - 1) : 0.5;
   let d;
-  switch (P.delayPattern) {
+  switch (ly.delayPattern) {
     case "linearX":  d = u; break;
     case "linearY":  d = v; break;
     case "diagonal": d = (u + v) / 2; break;
@@ -144,16 +160,16 @@ function cellDelay(i, j, cols, rows) {
     case "random":  d = hash2(i, j); break;
     default: d = 0;
   }
-  if (P.mirrorDelay) d = Math.abs(d - 0.5) * 2;
+  if (ly.mirrorDelay) d = Math.abs(d - 0.5) * 2;
   return d;
 }
 
 /* ═══════════════════════ Wave functions ═══════════════════════ */
 /* Map a phase (in cycles) to an oscillation value */
 
-function waveValue(phase) {
+function waveValue(ly, phase) {
   const p = phase - Math.floor(phase); // fractional cycle 0..1
-  switch (P.wave) {
+  switch (ly.wave) {
     case "spin":     return phase;                              // continuous rotation
     case "sine":     return Math.sin(phase * Math.PI * 2) * 0.5;
     case "pingpong": return (p < 0.5 ? p * 2 : 2 - p * 2) - 0.5;
@@ -226,20 +242,21 @@ function getFxState(w, h) {
     });
 }
 
-function cellShape(i, j) {
-  // Stable random assignment when several shapes are selected
-  // (offset seeds so it doesn't correlate with the "random" delay pattern)
-  const names = P.shapes;
+function cellShape(ly, li, i, j) {
+  // Stable random assignment when several shapes are selected.
+  // Seeds are offset per layer so layers don't share the same arrangement,
+  // and don't correlate with the "random" delay pattern.
+  const names = ly.shapes;
   if (names.length === 1) return names[0];
-  const idx = Math.floor(hash2(i + 101, j + 57) * names.length);
+  const idx = Math.floor(hash2(i + 101 + li * 31, j + 57 + li * 17) * names.length);
   return names[Math.min(idx, names.length - 1)];
 }
 
-function cellState(i, j, cols, rows, cell, cellH, fxState) {
+function cellState(ly, i, j, cols, rows, cell, cellH, fxState) {
   const cx = (i + 0.5) * cell;
   const cy = (j + 0.5) * cellH;
 
-  let phase = time * P.speed - cellDelay(i, j, cols, rows) * P.delayAmt;
+  let phase = time * ly.speed - cellDelay(ly, i, j, cols, rows) * ly.delayAmt;
   let extraRot = 0;
   let extraScale = 0;
 
@@ -256,20 +273,20 @@ function cellState(i, j, cols, rows, cell, cellH, fxState) {
     }
   }
 
-  let rot = waveValue(phase) * Math.PI * 2 * P.rot + extraRot;
+  let rot = waveValue(ly, phase) * Math.PI * 2 * ly.rot + extraRot;
 
-  if (P.quant > 0) {
-    const step = (Math.PI * 2) / P.quant;
+  if (ly.quant > 0) {
+    const step = (Math.PI * 2) / ly.quant;
     rot = Math.round(rot / step) * step;
   }
 
-  let scl = P.shapeScale * (1 - P.pad / 100);
-  if (P.scaleAmt > 0) {
-    scl *= 1 + Math.sin(phase * Math.PI * 2) * P.scaleAmt * 0.5;
+  let scl = ly.shapeScale * (1 - ly.pad / 100);
+  if (ly.scaleAmt > 0) {
+    scl *= 1 + Math.sin(phase * Math.PI * 2) * ly.scaleAmt * 0.5;
   }
   scl *= 1 + extraScale * 0.8;
 
-  const flip = P.checker && ((i + j) % 2 === 1);
+  const flip = ly.checker && ((i + j) % 2 === 1);
   return { cx, cy, rot, scl, flip };
 }
 
@@ -279,39 +296,39 @@ function render() {
   const w = cv.width, h = cv.height;
   if (w === 0 || h === 0) return;
 
-  const bg = P.swap ? P.fg : P.bg;
-  const fg = P.swap ? P.bg : P.fg;
-  currentFg = fg;
-
-  ctx.fillStyle = bg;
+  ctx.fillStyle = G.bg;
   ctx.fillRect(0, 0, w, h);
 
-  const cols = P.cols;
+  const cols = G.cols;
   const cell = w / cols;
   const rows = Math.max(1, Math.round(h / cell));
   const cellH = h / rows;
+  const size = Math.min(cell, cellH);
 
   const fxState = getFxState(w, h);
 
-  ctx.fillStyle = fg;
-  const size = Math.min(cell, cellH);
+  layers.forEach((ly, li) => {
+    if (!ly.visible) return;
+    currentFg = ly.fg;
+    ctx.fillStyle = ly.fg;
 
-  for (let j = 0; j < rows; j++) {
-    for (let i = 0; i < cols; i++) {
-      const c = cellState(i, j, cols, rows, cell, cellH, fxState);
-      if (c.scl <= 0.01) continue;
+    for (let j = 0; j < rows; j++) {
+      for (let i = 0; i < cols; i++) {
+        const c = cellState(ly, i, j, cols, rows, cell, cellH, fxState);
+        if (c.scl <= 0.01) continue;
 
-      ctx.save();
-      ctx.translate(c.cx, c.cy);
-      ctx.rotate(c.rot);
-      if (c.flip) ctx.scale(-1, 1);
-      SHAPES[cellShape(i, j)](ctx, size * c.scl);
-      ctx.restore();
+        ctx.save();
+        ctx.translate(c.cx, c.cy);
+        ctx.rotate(c.rot);
+        if (c.flip) ctx.scale(-1, 1);
+        SHAPES[cellShape(ly, li, i, j)](ctx, size * c.scl);
+        ctx.restore();
+      }
     }
-  }
+  });
 
   // Effector outlines
-  if (P.showFx) {
+  if (G.showFx) {
     for (const s of fxState) {
       ctx.save();
       ctx.strokeStyle = s.fx.color;
@@ -356,52 +373,151 @@ function loop(now) {
 
 const $ = id => document.getElementById(id);
 
-function bindRange(id, key, fmt, transform) {
-  const el = $(id), lbl = $("v-" + id);
-  el.addEventListener("input", () => {
-    const raw = parseFloat(el.value);
-    P[key] = transform ? transform(raw) : raw;
-    if (lbl) lbl.textContent = fmt(raw);
+/* Global controls */
+$("cols").addEventListener("input", e => {
+  G.cols = parseFloat(e.target.value);
+  $("v-cols").textContent = G.cols;
+});
+$("aspect").addEventListener("change", e => { G.aspect = parseFloat(e.target.value); fitCanvas(); });
+$("bgColor").addEventListener("input", e => G.bg = e.target.value);
+$("showFx").addEventListener("change", e => G.showFx = e.target.checked);
+$("tintSvg").addEventListener("change", e => G.tintSvg = e.target.checked);
+
+/* Per-layer controls: every change writes to the active layer */
+const LAYER_RANGES = [
+  // [element id, layer key, label formatter, value transform]
+  ["pad",        "pad",        v => v + "%",              v => v],
+  ["shapeScale", "shapeScale", v => v + "%",              v => v / 100],
+  ["speed",      "speed",      v => v.toFixed(2),         v => v],
+  ["rot",        "rot",        v => v.toFixed(2) + " turn", v => v],
+  ["scaleAmt",   "scaleAmt",   v => v + "%",              v => v / 100],
+  ["delayAmt",   "delayAmt",   v => v.toFixed(2) + " cycle", v => v],
+];
+
+for (const [id, key, fmt, transform] of LAYER_RANGES) {
+  $(id).addEventListener("input", e => {
+    const raw = parseFloat(e.target.value);
+    activeL()[key] = transform(raw);
+    $("v-" + id).textContent = fmt(raw);
   });
 }
 
-bindRange("cols", "cols", v => v);
-bindRange("pad", "pad", v => v + "%");
-bindRange("shapeScale", "shapeScale", v => v + "%", v => v / 100);
-bindRange("speed", "speed", v => v.toFixed(2));
-bindRange("rot", "rot", v => v.toFixed(2) + " turn");
-bindRange("scaleAmt", "scaleAmt", v => v + "%", v => v / 100);
-bindRange("delayAmt", "delayAmt", v => v.toFixed(2) + " cycle");
+$("wave").addEventListener("change", e => activeL().wave = e.target.value);
+$("quant").addEventListener("change", e => activeL().quant = parseInt(e.target.value));
+$("delayPattern").addEventListener("change", e => activeL().delayPattern = e.target.value);
+$("checker").addEventListener("change", e => activeL().checker = e.target.checked);
+$("mirrorDelay").addEventListener("change", e => activeL().mirrorDelay = e.target.checked);
+$("fgColor").addEventListener("input", e => {
+  activeL().fg = e.target.value;
+  buildLayerUI(); // refresh the swatch in the layer list
+});
 
-$("aspect").addEventListener("change", e => { P.aspect = parseFloat(e.target.value); fitCanvas(); });
-$("wave").addEventListener("change", e => P.wave = e.target.value);
-$("quant").addEventListener("change", e => P.quant = parseInt(e.target.value));
-$("delayPattern").addEventListener("change", e => P.delayPattern = e.target.value);
-$("bgColor").addEventListener("input", e => P.bg = e.target.value);
-$("fgColor").addEventListener("input", e => P.fg = e.target.value);
-$("swapColors").addEventListener("change", e => P.swap = e.target.checked);
-$("checker").addEventListener("change", e => P.checker = e.target.checked);
-$("mirrorDelay").addEventListener("change", e => P.mirrorDelay = e.target.checked);
-$("showFx").addEventListener("change", e => P.showFx = e.target.checked);
+/* Push the active layer's values into all per-layer controls */
+function syncLayerUI() {
+  const ly = activeL();
+  const inv = {
+    pad: ly.pad, shapeScale: ly.shapeScale * 100, speed: ly.speed,
+    rot: ly.rot, scaleAmt: ly.scaleAmt * 100, delayAmt: ly.delayAmt,
+  };
+  for (const [id, , fmt] of LAYER_RANGES) {
+    $(id).value = inv[id];
+    $("v-" + id).textContent = fmt(inv[id]);
+  }
+  $("wave").value = ly.wave;
+  $("quant").value = ly.quant;
+  $("delayPattern").value = ly.delayPattern;
+  $("checker").checked = ly.checker;
+  $("mirrorDelay").checked = ly.mirrorDelay;
+  $("fgColor").value = ly.fg;
+  updateShapeButtons();
+  document.querySelectorAll(".lyr-ind").forEach(el =>
+    el.textContent = "L" + (activeLayer + 1));
+}
 
-/* Shape picker */
+/* ═══════════════════════ Layer list UI ═══════════════════════ */
+
+const layerList = $("layerList");
+
+function buildLayerUI() {
+  layerList.innerHTML = "";
+  layers.forEach((ly, idx) => {
+    const row = document.createElement("div");
+    row.className = "layer-row" +
+      (idx === activeLayer ? " active" : "") +
+      (ly.visible ? "" : " off");
+
+    const sw = document.createElement("span");
+    sw.className = "sw";
+    sw.style.background = ly.fg;
+
+    const name = document.createElement("span");
+    name.className = "layer-name";
+    name.textContent = "Layer " + (idx + 1);
+
+    const btnVis = document.createElement("button");
+    btnVis.className = "small";
+    btnVis.textContent = ly.visible ? "👁" : "—";
+    btnVis.title = ly.visible ? "Hide layer" : "Show layer";
+    btnVis.addEventListener("click", e => {
+      e.stopPropagation();
+      ly.visible = !ly.visible;
+      buildLayerUI();
+    });
+
+    row.append(sw, name, btnVis);
+
+    if (layers.length > 1) {
+      const btnDel = document.createElement("button");
+      btnDel.className = "small danger";
+      btnDel.textContent = "✕";
+      btnDel.title = "Delete layer";
+      btnDel.addEventListener("click", e => {
+        e.stopPropagation();
+        layers.splice(idx, 1);
+        if (activeLayer >= layers.length) activeLayer = layers.length - 1;
+        buildLayerUI();
+        syncLayerUI();
+      });
+      row.appendChild(btnDel);
+    }
+
+    row.addEventListener("click", () => {
+      activeLayer = idx;
+      buildLayerUI();
+      syncLayerUI();
+    });
+
+    layerList.appendChild(row);
+  });
+}
+
+$("addLayer").addEventListener("click", () => {
+  layers.push(makeLayer());
+  activeLayer = layers.length - 1;
+  buildLayerUI();
+  syncLayerUI();
+});
+
+/* ═══════════════════════ Shape picker ═══════════════════════ */
+
 const shapePicker = $("shapePicker");
 
 function updateShapeButtons() {
   shapePicker.querySelectorAll("button").forEach(x =>
-    x.classList.toggle("active", P.shapes.includes(x.dataset.shape)));
+    x.classList.toggle("active", activeL().shapes.includes(x.dataset.shape)));
 }
 
 function selectShape(name, additive) {
+  const shapes = activeL().shapes;
   if (additive) {
-    const idx = P.shapes.indexOf(name);
+    const idx = shapes.indexOf(name);
     if (idx >= 0) {
-      if (P.shapes.length > 1) P.shapes.splice(idx, 1); // keep at least one
+      if (shapes.length > 1) shapes.splice(idx, 1); // keep at least one
     } else {
-      P.shapes.push(name);
+      shapes.push(name);
     }
   } else {
-    P.shapes = [name];
+    activeL().shapes = [name];
   }
   updateShapeButtons();
 }
@@ -411,7 +527,7 @@ function addShapeButton(name, iconHTML, title) {
   b.innerHTML = iconHTML;
   b.title = title || name;
   b.dataset.shape = name;
-  if (P.shapes.includes(name)) b.classList.add("active");
+  if (activeL().shapes.includes(name)) b.classList.add("active");
   b.addEventListener("click", e =>
     selectShape(name, e.ctrlKey || e.metaKey || e.shiftKey));
   shapePicker.appendChild(b);
@@ -426,7 +542,7 @@ for (const name of Object.keys(SHAPES)) {
 /* ── Custom SVG shapes ── */
 
 let customCounter = 0;
-const CUSTOM_SHAPES = {}; // name -> { img, svgText, tinted, tintColor }
+const CUSTOM_SHAPES = {}; // name -> { img, svgText, tints }
 
 function prepareSvg(text) {
   // Parse and make sure the SVG has explicit pixel dimensions,
@@ -445,8 +561,9 @@ function prepareSvg(text) {
 }
 
 function tintedCanvas(entry, color) {
-  // Cache a recolored copy of the SVG (silhouette in the given color)
-  if (entry.tinted && entry.tintColor === color) return entry.tinted;
+  // Cache recolored copies of the SVG, one per layer color
+  const cached = entry.tints.get(color);
+  if (cached) return cached;
   const iw = entry.img.naturalWidth || 1, ih = entry.img.naturalHeight || 1;
   const scale = 512 / Math.max(iw, ih);
   const oc = document.createElement("canvas");
@@ -457,8 +574,7 @@ function tintedCanvas(entry, color) {
   octx.globalCompositeOperation = "source-in";
   octx.fillStyle = color;
   octx.fillRect(0, 0, oc.width, oc.height);
-  entry.tinted = oc;
-  entry.tintColor = color;
+  entry.tints.set(color, oc);
   return oc;
 }
 
@@ -476,7 +592,7 @@ function addCustomShape(fileName, svgText) {
     const img = new Image();
     img.onload = () => {
       const name = "custom" + (++customCounter);
-      const entry = { img, svgText: cleaned, tinted: null, tintColor: null };
+      const entry = { img, svgText: cleaned, tints: new Map() };
       CUSTOM_SHAPES[name] = entry;
 
       SHAPES[name] = (c, s) => {
@@ -484,7 +600,7 @@ function addCustomShape(fileName, svgText) {
         const ar = iw / ih;
         let dw = s, dh = s;
         if (ar > 1) dh = s / ar; else dw = s * ar;
-        const src = P.tintSvg ? tintedCanvas(entry, currentFg) : img;
+        const src = G.tintSvg ? tintedCanvas(entry, currentFg) : img;
         c.drawImage(src, -dw / 2, -dh / 2, dw, dh);
       };
 
@@ -496,8 +612,10 @@ function addCustomShape(fileName, svgText) {
         delete CUSTOM_SHAPES[name];
         b.remove();
         URL.revokeObjectURL(url);
-        P.shapes = P.shapes.filter(s => s !== name);
-        if (P.shapes.length === 0) P.shapes = ["triangle"];
+        for (const ly of layers) {
+          ly.shapes = ly.shapes.filter(s => s !== name);
+          if (ly.shapes.length === 0) ly.shapes = ["triangle"];
+        }
         updateShapeButtons();
       });
       resolve(name);
@@ -517,14 +635,14 @@ $("svgFile").addEventListener("change", async e => {
     if (name) names.push(name);
   }
   if (names.length) {
-    // Select all shapes uploaded in this batch together
-    P.shapes = names;
+    // Select all shapes uploaded in this batch together (on the active layer)
+    activeL().shapes = names;
     updateShapeButtons();
   }
 });
-$("tintSvg").addEventListener("change", e => P.tintSvg = e.target.checked);
 
-/* Play / pause */
+/* ═══════════════════════ Play / pause ═══════════════════════ */
+
 const btnPlay = $("btnPlay");
 function togglePlay() {
   playing = !playing;
@@ -533,41 +651,34 @@ function togglePlay() {
 }
 btnPlay.addEventListener("click", togglePlay);
 
-/* Randomize */
+/* ═══════════════════════ Randomize ═══════════════════════ */
+
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 function rnd(min, max) { return min + Math.random() * (max - min); }
 
 function randomize() {
-  P.shapes = [pick(Object.keys(SHAPES))];
-  P.cols = Math.round(rnd(8, 36));
-  P.speed = rnd(0.1, 0.6);
-  P.wave = pick(["spin", "sine", "pingpong", "step", "pulse"]);
-  P.rot = rnd(0.25, 1.5);
-  P.delayPattern = pick(["linearX", "linearY", "diagonal", "radial", "spiral", "checker", "random"]);
-  P.delayAmt = rnd(0.5, 2.5);
-  P.quant = pick([0, 0, 0, 4, 2]);
-  P.checker = Math.random() < 0.35;
-  P.mirrorDelay = Math.random() < 0.3;
-  P.scaleAmt = Math.random() < 0.3 ? rnd(0.1, 0.5) : 0;
-  syncUI();
-}
+  G.cols = Math.round(rnd(8, 36));
+  $("cols").value = G.cols;
+  $("v-cols").textContent = G.cols;
 
-function syncUI() {
-  $("cols").value = P.cols; $("v-cols").textContent = P.cols;
-  $("speed").value = P.speed; $("v-speed").textContent = P.speed.toFixed(2);
-  $("rot").value = P.rot; $("v-rot").textContent = P.rot.toFixed(2) + " turn";
-  $("scaleAmt").value = P.scaleAmt * 100; $("v-scaleAmt").textContent = Math.round(P.scaleAmt * 100) + "%";
-  $("delayAmt").value = P.delayAmt; $("v-delayAmt").textContent = P.delayAmt.toFixed(2) + " cycle";
-  $("wave").value = P.wave;
-  $("quant").value = P.quant;
-  $("delayPattern").value = P.delayPattern;
-  $("checker").checked = P.checker;
-  $("mirrorDelay").checked = P.mirrorDelay;
-  updateShapeButtons();
+  for (const ly of layers) {
+    ly.shapes = [pick(Object.keys(SHAPES))];
+    ly.speed = rnd(0.1, 0.6);
+    ly.wave = pick(["spin", "sine", "pingpong", "step", "pulse"]);
+    ly.rot = rnd(0.25, 1.5);
+    ly.delayPattern = pick(["linearX", "linearY", "diagonal", "radial", "spiral", "checker", "random"]);
+    ly.delayAmt = rnd(0.5, 2.5);
+    ly.quant = pick([0, 0, 0, 4, 2]);
+    ly.checker = Math.random() < 0.35;
+    ly.mirrorDelay = Math.random() < 0.3;
+    ly.scaleAmt = Math.random() < 0.3 ? rnd(0.1, 0.5) : 0;
+  }
+  syncLayerUI();
 }
 $("btnRandom").addEventListener("click", randomize);
 
-/* Export */
+/* ═══════════════════════ Export ═══════════════════════ */
+
 function download(blob, filename) {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
@@ -577,12 +688,12 @@ function download(blob, filename) {
 }
 
 function exportPNG() {
-  const showFxPrev = P.showFx;
-  P.showFx = false;
+  const showFxPrev = G.showFx;
+  G.showFx = false;
   render();
   cv.toBlob(blob => {
     download(blob, "graphism-" + Date.now() + ".png");
-    P.showFx = showFxPrev;
+    G.showFx = showFxPrev;
   }, "image/png");
 }
 $("btnExportPng").addEventListener("click", exportPNG);
@@ -601,10 +712,8 @@ const SVG_SHAPE_DEFS = {
 
 function exportSVG() {
   const w = cv.width, h = cv.height;
-  const bg = P.swap ? P.fg : P.bg;
-  const fg = P.swap ? P.bg : P.fg;
 
-  const cols = P.cols;
+  const cols = G.cols;
   const cell = w / cols;
   const rows = Math.max(1, Math.round(h / cell));
   const cellH = h / rows;
@@ -619,57 +728,63 @@ function exportSVG() {
     `width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`
   );
 
-  // One shape definition per selected shape (unit size, referenced by cells)
+  // One def per shape per layer (ids: s{layer}-{shape index})
   parts.push("<defs>");
-  const needsTintFilter = P.tintSvg && P.shapes.some(s => CUSTOM_SHAPES[s]);
-  if (needsTintFilter) {
-    parts.push(
-      `<filter id="tint" x="-10%" y="-10%" width="120%" height="120%">` +
-      `<feFlood flood-color="${fg}"/>` +
-      `<feComposite in2="SourceAlpha" operator="in"/>` +
-      `</filter>`
-    );
-  }
-  P.shapes.forEach((shapeName, idx) => {
-    const custom = CUSTOM_SHAPES[shapeName];
-    if (custom) {
-      const iw = custom.img.naturalWidth || 1, ih = custom.img.naturalHeight || 1;
-      const ar = iw / ih;
-      const dw = ar > 1 ? 1 : ar;
-      const dh = ar > 1 ? 1 / ar : 1;
-      const uri = "data:image/svg+xml;base64," +
-        btoa(unescape(encodeURIComponent(custom.svgText)));
+  layers.forEach((ly, li) => {
+    if (!ly.visible) return;
+    if (G.tintSvg && ly.shapes.some(s => CUSTOM_SHAPES[s])) {
       parts.push(
-        `<g id="s${idx}"><image href="${uri}" xlink:href="${uri}" ` +
-        `x="${-dw / 2}" y="${-dh / 2}" width="${dw}" height="${dh}" ` +
-        `preserveAspectRatio="xMidYMid meet"` +
-        (P.tintSvg ? ` filter="url(#tint)"` : ``) + `/></g>`
+        `<filter id="tint${li}" x="-10%" y="-10%" width="120%" height="120%">` +
+        `<feFlood flood-color="${ly.fg}"/>` +
+        `<feComposite in2="SourceAlpha" operator="in"/>` +
+        `</filter>`
       );
-    } else {
-      parts.push(`<g id="s${idx}">${SVG_SHAPE_DEFS[shapeName]}</g>`);
     }
+    ly.shapes.forEach((shapeName, idx) => {
+      const custom = CUSTOM_SHAPES[shapeName];
+      if (custom) {
+        const iw = custom.img.naturalWidth || 1, ih = custom.img.naturalHeight || 1;
+        const ar = iw / ih;
+        const dw = ar > 1 ? 1 : ar;
+        const dh = ar > 1 ? 1 / ar : 1;
+        const uri = "data:image/svg+xml;base64," +
+          btoa(unescape(encodeURIComponent(custom.svgText)));
+        parts.push(
+          `<g id="s${li}-${idx}"><image href="${uri}" xlink:href="${uri}" ` +
+          `x="${-dw / 2}" y="${-dh / 2}" width="${dw}" height="${dh}" ` +
+          `preserveAspectRatio="xMidYMid meet"` +
+          (G.tintSvg ? ` filter="url(#tint${li})"` : ``) + `/></g>`
+        );
+      } else {
+        parts.push(`<g id="s${li}-${idx}">${SVG_SHAPE_DEFS[shapeName]}</g>`);
+      }
+    });
   });
   parts.push("</defs>");
 
-  parts.push(`<rect width="${w}" height="${h}" fill="${bg}"/>`);
-  parts.push(`<g fill="${fg}">`);
+  parts.push(`<rect width="${w}" height="${h}" fill="${G.bg}"/>`);
 
-  for (let j = 0; j < rows; j++) {
-    for (let i = 0; i < cols; i++) {
-      const c = cellState(i, j, cols, rows, cell, cellH, fxState);
-      if (c.scl <= 0.01) continue;
-      const k = size * c.scl;
-      const deg = c.rot * 180 / Math.PI;
-      const sx = c.flip ? -k : k;
-      const sid = "#s" + P.shapes.indexOf(cellShape(i, j));
-      parts.push(
-        `<use href="${sid}" xlink:href="${sid}" transform="translate(${n(c.cx)} ${n(c.cy)}) ` +
-        `rotate(${n(deg)}) scale(${n(sx)} ${n(k)})"/>`
-      );
+  layers.forEach((ly, li) => {
+    if (!ly.visible) return;
+    parts.push(`<g fill="${ly.fg}">`);
+    for (let j = 0; j < rows; j++) {
+      for (let i = 0; i < cols; i++) {
+        const c = cellState(ly, i, j, cols, rows, cell, cellH, fxState);
+        if (c.scl <= 0.01) continue;
+        const k = size * c.scl;
+        const deg = c.rot * 180 / Math.PI;
+        const sx = c.flip ? -k : k;
+        const sid = `#s${li}-${ly.shapes.indexOf(cellShape(ly, li, i, j))}`;
+        parts.push(
+          `<use href="${sid}" xlink:href="${sid}" transform="translate(${n(c.cx)} ${n(c.cy)}) ` +
+          `rotate(${n(deg)}) scale(${n(sx)} ${n(k)})"/>`
+        );
+      }
     }
-  }
+    parts.push("</g>");
+  });
 
-  parts.push("</g></svg>");
+  parts.push("</svg>");
 
   download(
     new Blob([parts.join("\n")], { type: "image/svg+xml" }),
@@ -678,7 +793,8 @@ function exportSVG() {
 }
 $("btnExportSvg").addEventListener("click", exportSVG);
 
-/* Keyboard shortcuts */
+/* ═══════════════════════ Keyboard shortcuts ═══════════════════════ */
+
 window.addEventListener("keydown", e => {
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
   if (e.code === "Space") { e.preventDefault(); togglePlay(); }
@@ -789,4 +905,6 @@ $("addEffector").addEventListener("click", () => makeEffector());
 /* ═══════════════════════ Go ═══════════════════════ */
 
 fitCanvas();
+buildLayerUI();
+syncLayerUI();
 requestAnimationFrame(loop);
