@@ -60,6 +60,7 @@ function makeLayer() {
   return {
     id: ++layerCounter,
     visible: true,
+    useMask: true, // whether the shape mask limits this layer
     shapes: ["triangle"], // >1 = random mix across the grid
     fg: LAYER_COLORS[(layerCounter - 1) % LAYER_COLORS.length],
     shapeScale: 1,
@@ -357,7 +358,7 @@ function render() {
 
     for (let j = 0; j < rows; j++) {
       for (let i = 0; i < cols; i++) {
-        if (mm && !mm[j * cols + i]) continue;
+        if (ly.useMask && mm && !mm[j * cols + i]) continue;
         const c = cellState(ly, i, j, cols, rows, cell, cellH, fxState);
         if (c.scl <= 0.01) continue;
 
@@ -473,6 +474,7 @@ function syncLayerUI() {
   $("checker").checked = ly.checker;
   $("mirrorDelay").checked = ly.mirrorDelay;
   $("fgColor").value = ly.fg;
+  $("layerMask").checked = ly.useMask;
   updateShapeButtons();
   document.querySelectorAll(".lyr-ind").forEach(el =>
     el.textContent = "L" + (activeLayer + 1));
@@ -715,6 +717,7 @@ $("maskScale").addEventListener("input", e => {
   $("v-maskScale").textContent = e.target.value + "%";
 });
 $("maskEnabled").addEventListener("change", e => MASK.enabled = e.target.checked);
+$("layerMask").addEventListener("change", e => activeL().useMask = e.target.checked);
 $("maskInvert").addEventListener("change", e => MASK.invert = e.target.checked);
 $("removeMask").addEventListener("click", () => {
   MASK.img = null;
@@ -855,7 +858,7 @@ function exportSVG() {
     parts.push(`<g fill="${ly.fg}">`);
     for (let j = 0; j < rows; j++) {
       for (let i = 0; i < cols; i++) {
-        if (mm && !mm[j * cols + i]) continue;
+        if (ly.useMask && mm && !mm[j * cols + i]) continue;
         const c = cellState(ly, i, j, cols, rows, cell, cellH, fxState);
         if (c.scl <= 0.01) continue;
         const k = size * c.scl;
