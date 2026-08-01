@@ -272,7 +272,8 @@
   <button id="btnPlay" class="primary">⏸ Pause</button>
   <button id="btnRandom">🎲 Randomize</button>
   <div class="spacer"></div>
-  <button id="btnExport">⬇ Export PNG</button>
+  <button id="btnExportPng">⬇ PNG</button>
+  <button id="btnExportSvg">⬇ SVG</button>
 </header>
 
 <main>
@@ -414,7 +415,8 @@
 <footer>
   <span><kbd>Space</kbd> play / pause</span>
   <span><kbd>R</kbd> randomize</span>
-  <span><kbd>E</kbd> export</span>
+  <span><kbd>E</kbd> export PNG</span>
+  <span><kbd>S</kbd> export SVG</span>
   <div class="spacer"></div>
   <span id="fps"></span>
 </footer>
@@ -637,6 +639,55 @@ function effectorRadius(fx, t, w, h) {
   return Math.max(base * pulse, 1);
 }
 
+/* ═══════════════════════ Cell math (shared by canvas + SVG export) ═══════════════════════ */
+
+function getFxState(w, h) {
+  return effectors
+    .filter(fx => fx.enabled)
+    .map(fx => {
+      const [x, y] = effectorPos(fx, time, w, h);
+      return { fx, x, y, r: effectorRadius(fx, time, w, h) };
+    });
+}
+
+function cellState(i, j, cols, rows, cell, cellH, fxState) {
+  const cx = (i + 0.5) * cell;
+  const cy = (j + 0.5) * cellH;
+
+  let phase = time * P.speed - cellDelay(i, j, cols, rows) * P.delayAmt;
+  let extraRot = 0;
+  let extraScale = 0;
+
+  for (const s of fxState) {
+    const d = Math.hypot(cx - s.x, cy - s.y);
+    if (d < s.r) {
+      const f = 1 - d / s.r;
+      const inf = f * f * s.fx.strength; // squared falloff = soft edge
+      switch (s.fx.target) {
+        case "rotation": extraRot += inf * Math.PI; break;
+        case "scale":    extraScale += inf; break;
+        case "phase":    phase += inf; break;
+      }
+    }
+  }
+
+  let rot = waveValue(phase) * Math.PI * 2 * P.rot + extraRot;
+
+  if (P.quant > 0) {
+    const step = (Math.PI * 2) / P.quant;
+    rot = Math.round(rot / step) * step;
+  }
+
+  let scl = P.shapeScale * (1 - P.pad / 100);
+  if (P.scaleAmt > 0) {
+    scl *= 1 + Math.sin(phase * Math.PI * 2) * P.scaleAmt * 0.5;
+  }
+  scl *= 1 + extraScale * 0.8;
+
+  const flip = P.checker && ((i + j) % 2 === 1);
+  return { cx, cy, rot, scl, flip };
+}
+
 /* ═══════════════════════ Render ═══════════════════════ */
 
 function render() {
@@ -655,59 +706,21 @@ function render() {
   const rows = Math.max(1, Math.round(h / cell));
   const cellH = h / rows;
 
-  const fxState = effectors
-    .filter(fx => fx.enabled)
-    .map(fx => {
-      const [x, y] = effectorPos(fx, time, w, h);
-      return { fx, x, y, r: effectorRadius(fx, time, w, h) };
-    });
+  const fxState = getFxState(w, h);
 
   ctx.fillStyle = fg;
   const size = Math.min(cell, cellH);
 
   for (let j = 0; j < rows; j++) {
     for (let i = 0; i < cols; i++) {
-      const cx = (i + 0.5) * cell;
-      const cy = (j + 0.5) * cellH;
-
-      let phase = time * P.speed - cellDelay(i, j, cols, rows) * P.delayAmt;
-      let extraRot = 0;
-      let extraScale = 0;
-
-      for (const s of fxState) {
-        const d = Math.hypot(cx - s.x, cy - s.y);
-        if (d < s.r) {
-          const f = 1 - d / s.r;
-          const inf = f * f * s.fx.strength; // squared falloff = soft edge
-          switch (s.fx.target) {
-            case "rotation": extraRot += inf * Math.PI; break;
-            case "scale":    extraScale += inf; break;
-            case "phase":    phase += inf; break;
-          }
-        }
-      }
-
-      let rot = waveValue(phase) * Math.PI * 2 * P.rot + extraRot;
-
-      if (P.quant > 0) {
-        const step = (Math.PI * 2) / P.quant;
-        rot = Math.round(rot / step) * step;
-      }
-
-      let scl = P.shapeScale * (1 - P.pad / 100);
-      if (P.scaleAmt > 0) {
-        scl *= 1 + Math.sin(phase * Math.PI * 2) * P.scaleAmt * 0.5;
-      }
-      scl *= 1 + extraScale * 0.8;
-      if (scl <= 0.01) continue;
-
-      const flip = P.checker && ((i + j) % 2 === 1);
+      const c = cellState(i, j, cols, rows, cell, cellH, fxState);
+      if (c.scl <= 0.01) continue;
 
       ctx.save();
-      ctx.translate(cx, cy);
-      ctx.rotate(rot);
-      if (flip) ctx.scale(-1, 1);
-      SHAPES[P.shape](ctx, size * scl);
+      ctx.translate(c.cx, c.cy);
+      ctx.rotate(c.rot);
+      if (c.flip) ctx.scale(-1, 1);
+      SHAPES[P.shape](ctx, size * c.scl);
       ctx.restore();
     }
   }
@@ -814,6 +827,7 @@ for (const name of Object.keys(SHAPES)) {
 /* ── Custom SVG shapes ── */
 
 let customCounter = 0;
+const CUSTOM_SHAPES = {}; // name -> { img, svgText, tinted, tintColor }
 
 function prepareSvg(text) {
   // Parse and make sure the SVG has explicit pixel dimensions,
@@ -857,7 +871,8 @@ function addCustomShape(fileName, svgText) {
   const img = new Image();
   img.onload = () => {
     const name = "custom" + (++customCounter);
-    const entry = { img, tinted: null, tintColor: null };
+    const entry = { img, svgText: cleaned, tinted: null, tintColor: null };
+    CUSTOM_SHAPES[name] = entry;
 
     SHAPES[name] = (c, s) => {
       const iw = img.naturalWidth || 1, ih = img.naturalHeight || 1;
@@ -873,6 +888,7 @@ function addCustomShape(fileName, svgText) {
     b.addEventListener("contextmenu", e => {
       e.preventDefault();
       delete SHAPES[name];
+      delete CUSTOM_SHAPES[name];
       b.remove();
       URL.revokeObjectURL(url);
       if (P.shape === name) selectShape("triangle");
@@ -938,21 +954,112 @@ function syncUI() {
 }
 $("btnRandom").addEventListener("click", randomize);
 
-/* Export PNG */
+/* Export */
+function download(blob, filename) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 function exportPNG() {
   const showFxPrev = P.showFx;
   P.showFx = false;
   render();
   cv.toBlob(blob => {
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "graphism-" + Date.now() + ".png";
-    a.click();
-    URL.revokeObjectURL(a.href);
+    download(blob, "graphism-" + Date.now() + ".png");
     P.showFx = showFxPrev;
   }, "image/png");
 }
-$("btnExport").addEventListener("click", exportPNG);
+$("btnExportPng").addEventListener("click", exportPNG);
+
+/* Unit-size (1×1, centered) vector versions of the built-in shapes */
+const SVG_SHAPE_DEFS = {
+  triangle:   '<path d="M-.5-.5 L.5.5 L-.5.5 Z"/>',
+  quarter:    '<path d="M-.5.5 L-.5-.5 A1 1 0 0 1 .5.5 Z"/>',
+  half:       '<path d="M0 .5 A.5 .5 0 0 1 0 -.5 Z"/>',
+  bar:        '<rect x="-.5" y="-.16667" width="1" height=".33333"/>',
+  halfSquare: '<rect x="-.5" y="0" width="1" height=".5"/>',
+  circle:     '<circle cx="0" cy="0" r=".5"/>',
+  bowtie:     '<path d="M-.5-.5 L0 0 L-.5.5 Z M.5-.5 L0 0 L.5.5 Z"/>',
+  hook:       '<path d="M-.5-.5 L.5-.5 L.5.5 Q-.5.5 -.5-.5 Z"/>',
+};
+
+function exportSVG() {
+  const w = cv.width, h = cv.height;
+  const bg = P.swap ? P.fg : P.bg;
+  const fg = P.swap ? P.bg : P.fg;
+
+  const cols = P.cols;
+  const cell = w / cols;
+  const rows = Math.max(1, Math.round(h / cell));
+  const cellH = h / rows;
+  const size = Math.min(cell, cellH);
+  const fxState = getFxState(w, h);
+
+  const n = v => +v.toFixed(2); // trim decimals to keep the file small
+
+  const parts = [];
+  parts.push(
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ` +
+    `width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`
+  );
+
+  // Shape definition (unit size, referenced by every cell)
+  parts.push("<defs>");
+  const custom = CUSTOM_SHAPES[P.shape];
+  if (custom) {
+    const iw = custom.img.naturalWidth || 1, ih = custom.img.naturalHeight || 1;
+    const ar = iw / ih;
+    const dw = ar > 1 ? 1 : ar;
+    const dh = ar > 1 ? 1 / ar : 1;
+    const uri = "data:image/svg+xml;base64," +
+      btoa(unescape(encodeURIComponent(custom.svgText)));
+    if (P.tintSvg) {
+      parts.push(
+        `<filter id="tint" x="-10%" y="-10%" width="120%" height="120%">` +
+        `<feFlood flood-color="${fg}"/>` +
+        `<feComposite in2="SourceAlpha" operator="in"/>` +
+        `</filter>`
+      );
+    }
+    parts.push(
+      `<g id="s"><image href="${uri}" xlink:href="${uri}" ` +
+      `x="${-dw / 2}" y="${-dh / 2}" width="${dw}" height="${dh}" ` +
+      `preserveAspectRatio="xMidYMid meet"` +
+      (P.tintSvg ? ` filter="url(#tint)"` : ``) + `/></g>`
+    );
+  } else {
+    parts.push(`<g id="s">${SVG_SHAPE_DEFS[P.shape]}</g>`);
+  }
+  parts.push("</defs>");
+
+  parts.push(`<rect width="${w}" height="${h}" fill="${bg}"/>`);
+  parts.push(`<g fill="${fg}">`);
+
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const c = cellState(i, j, cols, rows, cell, cellH, fxState);
+      if (c.scl <= 0.01) continue;
+      const k = size * c.scl;
+      const deg = c.rot * 180 / Math.PI;
+      const sx = c.flip ? -k : k;
+      parts.push(
+        `<use href="#s" xlink:href="#s" transform="translate(${n(c.cx)} ${n(c.cy)}) ` +
+        `rotate(${n(deg)}) scale(${n(sx)} ${n(k)})"/>`
+      );
+    }
+  }
+
+  parts.push("</g></svg>");
+
+  download(
+    new Blob([parts.join("\n")], { type: "image/svg+xml" }),
+    "graphism-" + Date.now() + ".svg"
+  );
+}
+$("btnExportSvg").addEventListener("click", exportSVG);
 
 /* Keyboard shortcuts */
 window.addEventListener("keydown", e => {
@@ -960,6 +1067,7 @@ window.addEventListener("keydown", e => {
   if (e.code === "Space") { e.preventDefault(); togglePlay(); }
   if (e.key === "r" || e.key === "R") randomize();
   if (e.key === "e" || e.key === "E") exportPNG();
+  if (e.key === "s" || e.key === "S") exportSVG();
 });
 
 /* ═══════════════════════ Effector UI ═══════════════════════ */
