@@ -133,6 +133,13 @@ input[type=range]::-webkit-slider-thumb {
   cursor: grab;
 }
 input[type=range]:active::-webkit-slider-thumb { cursor: grabbing; }
+header select { width: auto; padding: 7px 8px; }
+button.recording {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+button.recording:hover { background: var(--danger); border-color: var(--danger); }
 select {
   width: 100%;
   background: var(--panel-2);
@@ -191,7 +198,7 @@ input[type=color] {
   border-radius: 3px;
   padding: 1px;
 }
-#uploadSvg:hover { color: var(--accent); border-color: var(--accent); }
+#uploadSvg:hover, #uploadMask:hover { color: var(--accent); border-color: var(--accent); }
 .hint {
   font-size: 10.5px;
   color: var(--text-dim);

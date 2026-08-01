@@ -10,6 +10,46 @@ const G = {
   tintSvg: true,
 };
 
+/* Shape mask: an uploaded SVG whose silhouette defines WHERE cells exist —
+   shapes are only generated in grid cells that fall inside the outline */
+const MASK = { img: null, svgText: null, scale: 1, invert: false, enabled: true, version: 0 };
+
+function maskRect(w, h) {
+  // Fit the mask inside the canvas (contain, centered), scaled by MASK.scale
+  const iw = MASK.img.naturalWidth || 1, ih = MASK.img.naturalHeight || 1;
+  const k = Math.min(w / iw, h / ih) * MASK.scale;
+  const dw = iw * k, dh = ih * k;
+  return { x: (w - dw) / 2, y: (h - dh) / 2, dw, dh };
+}
+
+/* Per-cell occupancy map: the SVG is rasterized at one pixel per grid cell,
+   so each pixel's alpha ≈ how much of that cell the silhouette covers.
+   Cached until the mask, grid or canvas size changes. */
+let maskMap = null;
+let maskMapKey = "";
+
+function getMaskMap(w, h, cols, rows, cell, cellH) {
+  if (!(MASK.enabled && MASK.img)) return null;
+  const key = [w, h, cols, rows, MASK.scale, MASK.invert, MASK.version].join("|");
+  if (key === maskMapKey && maskMap) return maskMap;
+
+  const oc = document.createElement("canvas");
+  oc.width = cols;
+  oc.height = rows;
+  const octx = oc.getContext("2d", { willReadFrequently: true });
+  const r = maskRect(w, h);
+  octx.drawImage(MASK.img, r.x / cell, r.y / cellH, r.dw / cell, r.dh / cellH);
+
+  const data = octx.getImageData(0, 0, cols, rows).data;
+  maskMap = new Uint8Array(cols * rows);
+  for (let k = 0; k < maskMap.length; k++) {
+    const inside = data[k * 4 + 3] >= 128; // cell counts if ≥50% covered
+    maskMap[k] = inside !== MASK.invert ? 1 : 0;
+  }
+  maskMapKey = key;
+  return maskMap;
+}
+
 /* ═══════════════════════ Layers ═══════════════════════ */
 /* Each layer has its own shapes, color, motion and delay parameters */
 
@@ -307,6 +347,9 @@ function render() {
 
   const fxState = getFxState(w, h);
 
+  // Shape mask: cells outside the SVG silhouette are skipped entirely
+  const mm = getMaskMap(w, h, cols, rows, cell, cellH);
+
   layers.forEach((ly, li) => {
     if (!ly.visible) return;
     currentFg = ly.fg;
@@ -314,6 +357,7 @@ function render() {
 
     for (let j = 0; j < rows; j++) {
       for (let i = 0; i < cols; i++) {
+        if (mm && !mm[j * cols + i]) continue;
         const c = cellState(ly, i, j, cols, rows, cell, cellH, fxState);
         if (c.scl <= 0.01) continue;
 
@@ -641,6 +685,44 @@ $("svgFile").addEventListener("change", async e => {
   }
 });
 
+/* ── Clip mask ── */
+
+let maskUrl = null;
+
+$("uploadMask").addEventListener("click", () => $("maskFile").click());
+$("maskFile").addEventListener("change", async e => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  const cleaned = prepareSvg(await file.text());
+  if (!cleaned) { alert(`"${file.name}" is not a valid SVG file.`); return; }
+  if (maskUrl) URL.revokeObjectURL(maskUrl);
+  maskUrl = URL.createObjectURL(new Blob([cleaned], { type: "image/svg+xml" }));
+  const img = new Image();
+  img.onload = () => {
+    MASK.img = img;
+    MASK.svgText = cleaned;
+    MASK.version++;
+    $("maskName").textContent = file.name;
+    $("maskControls").style.display = "block";
+  };
+  img.onerror = () => alert(`Could not load "${file.name}".`);
+  img.src = maskUrl;
+});
+
+$("maskScale").addEventListener("input", e => {
+  MASK.scale = parseFloat(e.target.value) / 100;
+  $("v-maskScale").textContent = e.target.value + "%";
+});
+$("maskEnabled").addEventListener("change", e => MASK.enabled = e.target.checked);
+$("maskInvert").addEventListener("change", e => MASK.invert = e.target.checked);
+$("removeMask").addEventListener("click", () => {
+  MASK.img = null;
+  MASK.svgText = null;
+  if (maskUrl) { URL.revokeObjectURL(maskUrl); maskUrl = null; }
+  $("maskControls").style.display = "none";
+});
+
 /* ═══════════════════════ Play / pause ═══════════════════════ */
 
 const btnPlay = $("btnPlay");
@@ -728,6 +810,10 @@ function exportSVG() {
     `width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`
   );
 
+  // Shape mask: same per-cell occupancy map as the canvas renderer,
+  // so masked-out cells simply don't exist in the exported file
+  const mm = getMaskMap(w, h, cols, rows, cell, cellH);
+
   // One def per shape per layer (ids: s{layer}-{shape index})
   parts.push("<defs>");
   layers.forEach((ly, li) => {
@@ -769,6 +855,7 @@ function exportSVG() {
     parts.push(`<g fill="${ly.fg}">`);
     for (let j = 0; j < rows; j++) {
       for (let i = 0; i < cols; i++) {
+        if (mm && !mm[j * cols + i]) continue;
         const c = cellState(ly, i, j, cols, rows, cell, cellH, fxState);
         if (c.scl <= 0.01) continue;
         const k = size * c.scl;
@@ -792,6 +879,73 @@ function exportSVG() {
   );
 }
 $("btnExportSvg").addEventListener("click", exportSVG);
+
+/* ═══════════════════════ Video export ═══════════════════════ */
+
+const btnRecord = $("btnRecord");
+let recording = false;
+
+function pickVideoMime() {
+  // Prefer MP4 (H.264) when the browser can record it, fall back to WebM
+  const candidates = [
+    'video/mp4;codecs="avc1.640028"',
+    "video/mp4",
+    'video/webm;codecs="vp9"',
+    'video/webm;codecs="vp8"',
+    "video/webm",
+  ];
+  if (typeof MediaRecorder === "undefined") return null;
+  return candidates.find(m => MediaRecorder.isTypeSupported(m)) || null;
+}
+
+function startRecording() {
+  if (recording) return;
+  const seconds = parseInt($("recDur").value);
+  const mime = pickVideoMime();
+  if (!mime) {
+    alert("Video recording is not supported in this browser.");
+    return;
+  }
+
+  const stream = cv.captureStream(60);
+  const rec = new MediaRecorder(stream, {
+    mimeType: mime,
+    videoBitsPerSecond: 20_000_000, // high quality
+  });
+  const chunks = [];
+  rec.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
+
+  // Record a clean canvas: hide effector outlines, make sure motion runs
+  const prevShowFx = G.showFx;
+  const wasPlaying = playing;
+  G.showFx = false;
+  if (!playing) togglePlay();
+  recording = true;
+  btnRecord.classList.add("recording");
+  btnRecord.disabled = true;
+
+  const t0 = performance.now();
+  const timer = setInterval(() => {
+    const left = Math.max(0, seconds - (performance.now() - t0) / 1000);
+    btnRecord.textContent = "⏺ " + left.toFixed(1) + "s";
+  }, 100);
+
+  rec.onstop = () => {
+    clearInterval(timer);
+    const ext = mime.startsWith("video/mp4") ? "mp4" : "webm";
+    download(new Blob(chunks, { type: mime }), `graphism-${Date.now()}.${ext}`);
+    G.showFx = prevShowFx;
+    if (!wasPlaying) togglePlay(); // restore paused state
+    recording = false;
+    btnRecord.classList.remove("recording");
+    btnRecord.disabled = false;
+    btnRecord.textContent = "⏺ Record";
+  };
+
+  rec.start();
+  setTimeout(() => { if (rec.state !== "inactive") rec.stop(); }, seconds * 1000);
+}
+btnRecord.addEventListener("click", startRecording);
 
 /* ═══════════════════════ Keyboard shortcuts ═══════════════════════ */
 

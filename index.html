@@ -13,6 +13,13 @@
   <button id="btnPlay" class="primary">⏸ Pause</button>
   <button id="btnRandom">🎲 Randomize</button>
   <div class="spacer"></div>
+  <select id="recDur" title="Recording length">
+    <option value="2">2 s</option>
+    <option value="5" selected>5 s</option>
+    <option value="10">10 s</option>
+    <option value="15">15 s</option>
+  </select>
+  <button id="btnRecord">⏺ Record</button>
   <button id="btnExportPng">⬇ PNG</button>
   <button id="btnExportSvg">⬇ SVG</button>
 </header>
@@ -41,6 +48,25 @@
         <div class="ctl">
           <label>Columns <span class="val" id="v-cols">18</span></label>
           <input type="range" id="cols" min="2" max="60" step="1" value="18">
+        </div>
+      </div>
+    </details>
+
+    <details class="section" open>
+      <summary>Shape Mask</summary>
+      <div class="section-body">
+        <button id="uploadMask" style="width:100%; margin-bottom:10px; border-style:dashed; color:var(--text-dim)">⬆ Upload SVG mask</button>
+        <input type="file" id="maskFile" accept=".svg,image/svg+xml" hidden>
+        <p class="hint">Shapes are only generated in the grid cells inside the SVG's outline</p>
+        <div id="maskControls" style="display:none">
+          <p class="hint" id="maskName"></p>
+          <div class="ctl">
+            <label>Mask scale <span class="val" id="v-maskScale">100%</span></label>
+            <input type="range" id="maskScale" min="10" max="300" step="1" value="100">
+          </div>
+          <label class="check"><input type="checkbox" id="maskEnabled" checked> Enable mask</label>
+          <label class="check"><input type="checkbox" id="maskInvert"> Invert (show outside)</label>
+          <button id="removeMask" class="danger" style="width:100%">✕ Remove mask</button>
         </div>
       </div>
     </details>
