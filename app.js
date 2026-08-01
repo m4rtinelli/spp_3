@@ -783,17 +783,59 @@ function exportPNG() {
 }
 $("btnExportPng").addEventListener("click", exportPNG);
 
-/* Unit-size (1×1, centered) vector versions of the built-in shapes */
+/* Unit-size (1×1, centered) vector versions of the built-in shapes.
+   Coordinates are fully spaced with leading zeros — some editors
+   (notably Illustrator) choke on compact path syntax. */
 const SVG_SHAPE_DEFS = {
-  triangle:   '<path d="M-.5-.5 L.5.5 L-.5.5 Z"/>',
-  quarter:    '<path d="M-.5.5 L-.5-.5 A1 1 0 0 1 .5.5 Z"/>',
-  half:       '<path d="M0 .5 A.5 .5 0 0 1 0 -.5 Z"/>',
-  bar:        '<rect x="-.5" y="-.16667" width="1" height=".33333"/>',
-  halfSquare: '<rect x="-.5" y="0" width="1" height=".5"/>',
-  circle:     '<circle cx="0" cy="0" r=".5"/>',
-  bowtie:     '<path d="M-.5-.5 L0 0 L-.5.5 Z M.5-.5 L0 0 L.5.5 Z"/>',
-  hook:       '<path d="M-.5-.5 L.5-.5 L.5.5 Q-.5.5 -.5-.5 Z"/>',
+  triangle:   '<path d="M -0.5 -0.5 L 0.5 0.5 L -0.5 0.5 Z"/>',
+  quarter:    '<path d="M -0.5 0.5 L -0.5 -0.5 A 1 1 0 0 1 0.5 0.5 Z"/>',
+  half:       '<path d="M 0 0.5 A 0.5 0.5 0 0 1 0 -0.5 Z"/>',
+  bar:        '<rect x="-0.5" y="-0.16667" width="1" height="0.33333"/>',
+  halfSquare: '<rect x="-0.5" y="0" width="1" height="0.5"/>',
+  circle:     '<circle cx="0" cy="0" r="0.5"/>',
+  bowtie:     '<path d="M -0.5 -0.5 L 0 0 L -0.5 0.5 Z M 0.5 -0.5 L 0 0 L 0.5 0.5 Z"/>',
+  hook:       '<path d="M -0.5 -0.5 L 0.5 -0.5 L 0.5 0.5 Q -0.5 0.5 -0.5 -0.5 Z"/>',
 };
+
+/* Inline a custom SVG as real vector nodes (Illustrator cannot read
+   SVG-format images embedded via data URIs — it reports the file as
+   corrupt — so the artwork is embedded as actual geometry instead). */
+function inlineCustomSvgDef(entry, id, tintColor) {
+  const doc = new DOMParser().parseFromString(entry.svgText, "image/svg+xml");
+  const root = doc.documentElement;
+
+  // Coordinate system of the artwork
+  const vb = (root.getAttribute("viewBox") || "").split(/[\s,]+/).map(Number);
+  let minx = 0, miny = 0;
+  let vw = parseFloat(root.getAttribute("width")) || 100;
+  let vh = parseFloat(root.getAttribute("height")) || 100;
+  if (vb.length === 4 && vb[2] > 0 && vb[3] > 0) {
+    minx = vb[0]; miny = vb[1]; vw = vb[2]; vh = vb[3];
+  }
+
+  // Recolor: force every painted element to the layer color,
+  // mirroring the canvas silhouette tint
+  if (tintColor) {
+    for (const el of root.querySelectorAll("*")) {
+      el.removeAttribute("style"); // inline styles would override the fill
+      if (el.getAttribute("fill") !== "none") el.setAttribute("fill", tintColor);
+      const st = el.getAttribute("stroke");
+      if (st && st !== "none") el.setAttribute("stroke", tintColor);
+    }
+  }
+
+  // Map the artwork into the unit cell box, preserving aspect ratio
+  const iw = entry.img.naturalWidth || vw, ih = entry.img.naturalHeight || vh;
+  const ar = iw / ih;
+  const dw = ar > 1 ? 1 : ar;
+  const dh = ar > 1 ? 1 / ar : 1;
+  const n6 = v => +v.toFixed(6);
+
+  const ser = new XMLSerializer();
+  const inner = [...root.childNodes].map(nd => ser.serializeToString(nd)).join("");
+  return `<g id="${id}" transform="translate(${n6(-dw / 2)} ${n6(-dh / 2)}) ` +
+    `scale(${n6(dw / vw)} ${n6(dh / vh)}) translate(${n6(-minx)} ${n6(-miny)})">${inner}</g>`;
+}
 
 function exportSVG() {
   const w = cv.width, h = cv.height;
@@ -808,6 +850,7 @@ function exportSVG() {
   const n = v => +v.toFixed(2); // trim decimals to keep the file small
 
   const parts = [];
+  parts.push(`<?xml version="1.0" encoding="UTF-8"?>`);
   parts.push(
     `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" ` +
     `width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`
@@ -821,29 +864,10 @@ function exportSVG() {
   parts.push("<defs>");
   layers.forEach((ly, li) => {
     if (!ly.visible) return;
-    if (G.tintSvg && ly.shapes.some(s => CUSTOM_SHAPES[s])) {
-      parts.push(
-        `<filter id="tint${li}" x="-10%" y="-10%" width="120%" height="120%">` +
-        `<feFlood flood-color="${ly.fg}"/>` +
-        `<feComposite in2="SourceAlpha" operator="in"/>` +
-        `</filter>`
-      );
-    }
     ly.shapes.forEach((shapeName, idx) => {
       const custom = CUSTOM_SHAPES[shapeName];
       if (custom) {
-        const iw = custom.img.naturalWidth || 1, ih = custom.img.naturalHeight || 1;
-        const ar = iw / ih;
-        const dw = ar > 1 ? 1 : ar;
-        const dh = ar > 1 ? 1 / ar : 1;
-        const uri = "data:image/svg+xml;base64," +
-          btoa(unescape(encodeURIComponent(custom.svgText)));
-        parts.push(
-          `<g id="s${li}-${idx}"><image href="${uri}" xlink:href="${uri}" ` +
-          `x="${-dw / 2}" y="${-dh / 2}" width="${dw}" height="${dh}" ` +
-          `preserveAspectRatio="xMidYMid meet"` +
-          (G.tintSvg ? ` filter="url(#tint${li})"` : ``) + `/></g>`
-        );
+        parts.push(inlineCustomSvgDef(custom, `s${li}-${idx}`, G.tintSvg ? ly.fg : null));
       } else {
         parts.push(`<g id="s${li}-${idx}">${SVG_SHAPE_DEFS[shapeName]}</g>`);
       }
@@ -877,7 +901,7 @@ function exportSVG() {
   parts.push("</svg>");
 
   download(
-    new Blob([parts.join("\n")], { type: "image/svg+xml" }),
+    new Blob([parts.join("\n")], { type: "image/svg+xml;charset=utf-8" }),
     "graphism-" + Date.now() + ".svg"
   );
 }
