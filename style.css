@@ -192,6 +192,12 @@ input[type=color] {
   padding: 1px;
 }
 #uploadSvg:hover { color: var(--accent); border-color: var(--accent); }
+.hint {
+  font-size: 10.5px;
+  color: var(--text-dim);
+  line-height: 1.4;
+  margin: -4px 0 10px;
+}
 
 /* ── Effector cards ──────────────────────── */
 .fx-card {

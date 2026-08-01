@@ -10,7 +10,7 @@ const P = {
   cols: 18,
   pad: 0,
   checker: false,
-  shape: "triangle",
+  shapes: ["triangle"], // selected shapes; >1 = random mix across the grid
   shapeScale: 1,
   speed: 0.25,
   wave: "sine",
@@ -226,6 +226,15 @@ function getFxState(w, h) {
     });
 }
 
+function cellShape(i, j) {
+  // Stable random assignment when several shapes are selected
+  // (offset seeds so it doesn't correlate with the "random" delay pattern)
+  const names = P.shapes;
+  if (names.length === 1) return names[0];
+  const idx = Math.floor(hash2(i + 101, j + 57) * names.length);
+  return names[Math.min(idx, names.length - 1)];
+}
+
 function cellState(i, j, cols, rows, cell, cellH, fxState) {
   const cx = (i + 0.5) * cell;
   const cy = (j + 0.5) * cellH;
@@ -296,7 +305,7 @@ function render() {
       ctx.translate(c.cx, c.cy);
       ctx.rotate(c.rot);
       if (c.flip) ctx.scale(-1, 1);
-      SHAPES[P.shape](ctx, size * c.scl);
+      SHAPES[cellShape(i, j)](ctx, size * c.scl);
       ctx.restore();
     }
   }
@@ -378,10 +387,23 @@ $("showFx").addEventListener("change", e => P.showFx = e.target.checked);
 /* Shape picker */
 const shapePicker = $("shapePicker");
 
-function selectShape(name) {
-  P.shape = name;
+function updateShapeButtons() {
   shapePicker.querySelectorAll("button").forEach(x =>
-    x.classList.toggle("active", x.dataset.shape === name));
+    x.classList.toggle("active", P.shapes.includes(x.dataset.shape)));
+}
+
+function selectShape(name, additive) {
+  if (additive) {
+    const idx = P.shapes.indexOf(name);
+    if (idx >= 0) {
+      if (P.shapes.length > 1) P.shapes.splice(idx, 1); // keep at least one
+    } else {
+      P.shapes.push(name);
+    }
+  } else {
+    P.shapes = [name];
+  }
+  updateShapeButtons();
 }
 
 function addShapeButton(name, iconHTML, title) {
@@ -389,8 +411,9 @@ function addShapeButton(name, iconHTML, title) {
   b.innerHTML = iconHTML;
   b.title = title || name;
   b.dataset.shape = name;
-  if (name === P.shape) b.classList.add("active");
-  b.addEventListener("click", () => selectShape(name));
+  if (P.shapes.includes(name)) b.classList.add("active");
+  b.addEventListener("click", e =>
+    selectShape(name, e.ctrlKey || e.metaKey || e.shiftKey));
   shapePicker.appendChild(b);
   return b;
 }
@@ -440,49 +463,64 @@ function tintedCanvas(entry, color) {
 }
 
 function addCustomShape(fileName, svgText) {
-  const cleaned = prepareSvg(svgText);
-  if (!cleaned) { alert(`"${fileName}" is not a valid SVG file.`); return; }
+  // Resolves with the new shape's name (or null if the file was invalid)
+  return new Promise(resolve => {
+    const cleaned = prepareSvg(svgText);
+    if (!cleaned) {
+      alert(`"${fileName}" is not a valid SVG file.`);
+      resolve(null);
+      return;
+    }
 
-  const url = URL.createObjectURL(new Blob([cleaned], { type: "image/svg+xml" }));
-  const img = new Image();
-  img.onload = () => {
-    const name = "custom" + (++customCounter);
-    const entry = { img, svgText: cleaned, tinted: null, tintColor: null };
-    CUSTOM_SHAPES[name] = entry;
+    const url = URL.createObjectURL(new Blob([cleaned], { type: "image/svg+xml" }));
+    const img = new Image();
+    img.onload = () => {
+      const name = "custom" + (++customCounter);
+      const entry = { img, svgText: cleaned, tinted: null, tintColor: null };
+      CUSTOM_SHAPES[name] = entry;
 
-    SHAPES[name] = (c, s) => {
-      const iw = img.naturalWidth || 1, ih = img.naturalHeight || 1;
-      const ar = iw / ih;
-      let dw = s, dh = s;
-      if (ar > 1) dh = s / ar; else dw = s * ar;
-      const src = P.tintSvg ? tintedCanvas(entry, currentFg) : img;
-      c.drawImage(src, -dw / 2, -dh / 2, dw, dh);
+      SHAPES[name] = (c, s) => {
+        const iw = img.naturalWidth || 1, ih = img.naturalHeight || 1;
+        const ar = iw / ih;
+        let dw = s, dh = s;
+        if (ar > 1) dh = s / ar; else dw = s * ar;
+        const src = P.tintSvg ? tintedCanvas(entry, currentFg) : img;
+        c.drawImage(src, -dw / 2, -dh / 2, dw, dh);
+      };
+
+      const b = addShapeButton(name, `<img src="${url}" alt="">`,
+        fileName + " — right-click to remove");
+      b.addEventListener("contextmenu", e => {
+        e.preventDefault();
+        delete SHAPES[name];
+        delete CUSTOM_SHAPES[name];
+        b.remove();
+        URL.revokeObjectURL(url);
+        P.shapes = P.shapes.filter(s => s !== name);
+        if (P.shapes.length === 0) P.shapes = ["triangle"];
+        updateShapeButtons();
+      });
+      resolve(name);
     };
-
-    const b = addShapeButton(name, `<img src="${url}" alt="">`,
-      fileName + " — right-click to remove");
-    b.addEventListener("contextmenu", e => {
-      e.preventDefault();
-      delete SHAPES[name];
-      delete CUSTOM_SHAPES[name];
-      b.remove();
-      URL.revokeObjectURL(url);
-      if (P.shape === name) selectShape("triangle");
-    });
-    selectShape(name);
-  };
-  img.onerror = () => alert(`Could not load "${fileName}".`);
-  img.src = url;
+    img.onerror = () => { alert(`Could not load "${fileName}".`); resolve(null); };
+    img.src = url;
+  });
 }
 
 $("uploadSvg").addEventListener("click", () => $("svgFile").click());
-$("svgFile").addEventListener("change", e => {
-  for (const file of e.target.files) {
-    const reader = new FileReader();
-    reader.onload = () => addCustomShape(file.name, reader.result);
-    reader.readAsText(file);
-  }
+$("svgFile").addEventListener("change", async e => {
+  const files = [...e.target.files];
   e.target.value = "";
+  const names = [];
+  for (const file of files) {
+    const name = await addCustomShape(file.name, await file.text());
+    if (name) names.push(name);
+  }
+  if (names.length) {
+    // Select all shapes uploaded in this batch together
+    P.shapes = names;
+    updateShapeButtons();
+  }
 });
 $("tintSvg").addEventListener("change", e => P.tintSvg = e.target.checked);
 
@@ -500,7 +538,7 @@ function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
 function rnd(min, max) { return min + Math.random() * (max - min); }
 
 function randomize() {
-  P.shape = pick(Object.keys(SHAPES));
+  P.shapes = [pick(Object.keys(SHAPES))];
   P.cols = Math.round(rnd(8, 36));
   P.speed = rnd(0.1, 0.6);
   P.wave = pick(["spin", "sine", "pingpong", "step", "pulse"]);
@@ -525,8 +563,7 @@ function syncUI() {
   $("delayPattern").value = P.delayPattern;
   $("checker").checked = P.checker;
   $("mirrorDelay").checked = P.mirrorDelay;
-  shapePicker.querySelectorAll("button").forEach(x =>
-    x.classList.toggle("active", x.dataset.shape === P.shape));
+  updateShapeButtons();
 }
 $("btnRandom").addEventListener("click", randomize);
 
@@ -582,33 +619,36 @@ function exportSVG() {
     `width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`
   );
 
-  // Shape definition (unit size, referenced by every cell)
+  // One shape definition per selected shape (unit size, referenced by cells)
   parts.push("<defs>");
-  const custom = CUSTOM_SHAPES[P.shape];
-  if (custom) {
-    const iw = custom.img.naturalWidth || 1, ih = custom.img.naturalHeight || 1;
-    const ar = iw / ih;
-    const dw = ar > 1 ? 1 : ar;
-    const dh = ar > 1 ? 1 / ar : 1;
-    const uri = "data:image/svg+xml;base64," +
-      btoa(unescape(encodeURIComponent(custom.svgText)));
-    if (P.tintSvg) {
-      parts.push(
-        `<filter id="tint" x="-10%" y="-10%" width="120%" height="120%">` +
-        `<feFlood flood-color="${fg}"/>` +
-        `<feComposite in2="SourceAlpha" operator="in"/>` +
-        `</filter>`
-      );
-    }
+  const needsTintFilter = P.tintSvg && P.shapes.some(s => CUSTOM_SHAPES[s]);
+  if (needsTintFilter) {
     parts.push(
-      `<g id="s"><image href="${uri}" xlink:href="${uri}" ` +
-      `x="${-dw / 2}" y="${-dh / 2}" width="${dw}" height="${dh}" ` +
-      `preserveAspectRatio="xMidYMid meet"` +
-      (P.tintSvg ? ` filter="url(#tint)"` : ``) + `/></g>`
+      `<filter id="tint" x="-10%" y="-10%" width="120%" height="120%">` +
+      `<feFlood flood-color="${fg}"/>` +
+      `<feComposite in2="SourceAlpha" operator="in"/>` +
+      `</filter>`
     );
-  } else {
-    parts.push(`<g id="s">${SVG_SHAPE_DEFS[P.shape]}</g>`);
   }
+  P.shapes.forEach((shapeName, idx) => {
+    const custom = CUSTOM_SHAPES[shapeName];
+    if (custom) {
+      const iw = custom.img.naturalWidth || 1, ih = custom.img.naturalHeight || 1;
+      const ar = iw / ih;
+      const dw = ar > 1 ? 1 : ar;
+      const dh = ar > 1 ? 1 / ar : 1;
+      const uri = "data:image/svg+xml;base64," +
+        btoa(unescape(encodeURIComponent(custom.svgText)));
+      parts.push(
+        `<g id="s${idx}"><image href="${uri}" xlink:href="${uri}" ` +
+        `x="${-dw / 2}" y="${-dh / 2}" width="${dw}" height="${dh}" ` +
+        `preserveAspectRatio="xMidYMid meet"` +
+        (P.tintSvg ? ` filter="url(#tint)"` : ``) + `/></g>`
+      );
+    } else {
+      parts.push(`<g id="s${idx}">${SVG_SHAPE_DEFS[shapeName]}</g>`);
+    }
+  });
   parts.push("</defs>");
 
   parts.push(`<rect width="${w}" height="${h}" fill="${bg}"/>`);
@@ -621,8 +661,9 @@ function exportSVG() {
       const k = size * c.scl;
       const deg = c.rot * 180 / Math.PI;
       const sx = c.flip ? -k : k;
+      const sid = "#s" + P.shapes.indexOf(cellShape(i, j));
       parts.push(
-        `<use href="#s" xlink:href="#s" transform="translate(${n(c.cx)} ${n(c.cy)}) ` +
+        `<use href="${sid}" xlink:href="${sid}" transform="translate(${n(c.cx)} ${n(c.cy)}) ` +
         `rotate(${n(deg)}) scale(${n(sx)} ${n(k)})"/>`
       );
     }
