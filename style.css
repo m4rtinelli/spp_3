@@ -198,7 +198,7 @@ input[type=color] {
   border-radius: 3px;
   padding: 1px;
 }
-#uploadSvg:hover, #uploadMask:hover { color: var(--accent); border-color: var(--accent); }
+#uploadSvg:hover, #uploadMask:hover, #uploadSolid:hover { color: var(--accent); border-color: var(--accent); }
 .hint {
   font-size: 10.5px;
   color: var(--text-dim);

@@ -73,6 +73,41 @@
     </details>
 
     <details class="section" open>
+      <summary>Solid SVG</summary>
+      <div class="section-body">
+        <button id="uploadSolid" style="width:100%; margin-bottom:10px; border-style:dashed; color:var(--text-dim)">⬆ Upload solid SVG</button>
+        <input type="file" id="solidFile" accept=".svg,image/svg+xml" hidden>
+        <p class="hint">Drawn on top of the grid. The pulse travels letter by letter — neighbors slide aside to give the growing element room</p>
+        <div id="solidControls" style="display:none">
+          <p class="hint" id="solidName"></p>
+          <div class="ctl">
+            <label>Size <span class="val" id="v-solidScale">100%</span></label>
+            <input type="range" id="solidScale" min="10" max="300" step="1" value="100">
+          </div>
+          <div class="ctl">
+            <label>Vertical position <span class="val" id="v-solidY">0%</span></label>
+            <input type="range" id="solidY" min="-50" max="50" step="1" value="0">
+          </div>
+          <label class="check"><input type="checkbox" id="solidPulse" checked> Pulsating motion</label>
+          <div class="ctl">
+            <label>Pulse amount <span class="val" id="v-solidAmp">+60%</span></label>
+            <input type="range" id="solidAmp" min="0" max="150" step="1" value="60">
+          </div>
+          <div class="ctl">
+            <label>Pulse speed <span class="val" id="v-solidSpeed">1.00 l/s</span></label>
+            <input type="range" id="solidSpeed" min="0.1" max="4" step="0.05" value="1">
+          </div>
+          <label class="check"><input type="checkbox" id="solidRecolor"> Recolor</label>
+          <div class="ctl">
+            <label>Color</label>
+            <input type="color" id="solidColor" value="#000000">
+          </div>
+          <button id="removeSolid" class="danger" style="width:100%">✕ Remove solid SVG</button>
+        </div>
+      </div>
+    </details>
+
+    <details class="section" open>
       <summary>Layers</summary>
       <div class="section-body">
         <div id="layerList"></div>

@@ -83,6 +83,172 @@ const activeL = () => layers[activeLayer];
 
 let currentFg = "#000000"; // color of the layer being drawn, used to tint custom SVGs
 
+/* ═══════════════════════ Solid SVG overlay ═══════════════════════ */
+/* An SVG drawn on top of the grid, split into its individual elements
+   (letters/shapes). A pulse can travel from element to element, scaling
+   one up while the others slide aside to give it room. */
+
+const SOLID = {
+  elements: [],                                   // {markup,bx,by,bw,bh,cx,cy,img,tints,url}
+  vb: { minx: 0, miny: 0, vw: 100, vh: 100 },     // original viewBox
+  scale: 1,
+  posY: 0,        // vertical offset, fraction of canvas height
+  pulse: true,
+  amp: 0.6,       // extra scale at pulse peak (0.6 = +60%)
+  speed: 1,       // letters per second
+  recolor: false,
+  color: "#000000",
+};
+
+function collectSolidElements(container) {
+  // Walk down through single <g> wrappers (common in Illustrator exports),
+  // keeping their attributes so transforms/fills still apply to each element
+  const skip = new Set(["defs", "style", "metadata", "title", "desc"]);
+  const wrapOpen = [], wrapClose = [];
+  let kids = [...container.children].filter(el => !skip.has(el.tagName.toLowerCase()));
+  while (kids.length === 1 && kids[0].tagName.toLowerCase() === "g") {
+    const g = kids[0];
+    const attrs = [...g.attributes]
+      .map(a => `${a.name}="${a.value.replace(/"/g, "&quot;")}"`).join(" ");
+    wrapOpen.push(`<g ${attrs}>`);
+    wrapClose.push("</g>");
+    container = g;
+    kids = [...container.children].filter(el => !skip.has(el.tagName.toLowerCase()));
+  }
+  return { kids, wrapOpen: wrapOpen.join(""), wrapClose: wrapClose.reverse().join("") };
+}
+
+async function loadSolidSvg(text) {
+  const cleaned = prepareSvg(text);
+  if (!cleaned) return 0;
+
+  const doc = new DOMParser().parseFromString(cleaned, "image/svg+xml");
+  const root = doc.documentElement;
+  const vbArr = (root.getAttribute("viewBox") || "").split(/[\s,]+/).map(Number);
+  let vb;
+  if (vbArr.length === 4 && vbArr[2] > 0 && vbArr[3] > 0) {
+    vb = { minx: vbArr[0], miny: vbArr[1], vw: vbArr[2], vh: vbArr[3] };
+  } else {
+    vb = { minx: 0, miny: 0,
+      vw: parseFloat(root.getAttribute("width")) || 100,
+      vh: parseFloat(root.getAttribute("height")) || 100 };
+  }
+
+  // Mount a hidden copy so getBBox/getCTM work, then measure each element
+  const NS = "http://www.w3.org/2000/svg";
+  const meas = document.createElementNS(NS, "svg");
+  meas.setAttribute("viewBox", `${vb.minx} ${vb.miny} ${vb.vw} ${vb.vh}`);
+  meas.setAttribute("width", vb.vw);
+  meas.setAttribute("height", vb.vh);
+  meas.style.cssText = "position:absolute;left:-99999px;top:0;visibility:hidden";
+  meas.innerHTML = root.innerHTML;
+  document.body.appendChild(meas);
+
+  const { kids, wrapOpen, wrapClose } = collectSolidElements(meas);
+  const ser = new XMLSerializer();
+  const els = [];
+  for (const el of kids) {
+    let bb, m;
+    try { bb = el.getBBox(); m = el.getCTM(); } catch (e) { continue; }
+    if (!bb || !m || (bb.width === 0 && bb.height === 0)) continue;
+    // Map the bbox corners into the root SVG's user space
+    const pts = [
+      [bb.x, bb.y], [bb.x + bb.width, bb.y],
+      [bb.x, bb.y + bb.height], [bb.x + bb.width, bb.y + bb.height],
+    ].map(([x, y]) => [
+      m.a * x + m.c * y + m.e + vb.minx,
+      m.b * x + m.d * y + m.f + vb.miny,
+    ]);
+    let bx = Infinity, by = Infinity, ex = -Infinity, ey = -Infinity;
+    for (const [x, y] of pts) {
+      bx = Math.min(bx, x); by = Math.min(by, y);
+      ex = Math.max(ex, x); ey = Math.max(ey, y);
+    }
+    const pad = Math.max(ex - bx, ey - by) * 0.05 + 0.5; // room for strokes
+    bx -= pad; by -= pad; ex += pad; ey += pad;
+    const bw = ex - bx, bh = ey - by;
+    els.push({
+      markup: wrapOpen + ser.serializeToString(el) + wrapClose,
+      bx, by, bw, bh, cx: bx + bw / 2, cy: by + bh / 2,
+      img: null, tints: new Map(), url: null,
+    });
+  }
+  document.body.removeChild(meas);
+  if (!els.length) return 0;
+
+  els.sort((a, b) => a.cx - b.cx); // pulse travels in reading order
+
+  // Rasterize each element to its own image for fast canvas drawing
+  const ss = Math.max(2, 2000 / Math.max(vb.vw, vb.vh)); // supersampling
+  await Promise.all(els.map(el => new Promise(res => {
+    const svgStr =
+      `<svg xmlns="${NS}" viewBox="${el.bx} ${el.by} ${el.bw} ${el.bh}" ` +
+      `width="${Math.max(2, Math.ceil(el.bw * ss))}" ` +
+      `height="${Math.max(2, Math.ceil(el.bh * ss))}">${el.markup}</svg>`;
+    const url = URL.createObjectURL(new Blob([svgStr], { type: "image/svg+xml" }));
+    const img = new Image();
+    img.onload = () => { el.img = img; el.url = url; res(); };
+    img.onerror = () => { URL.revokeObjectURL(url); res(); };
+    img.src = url;
+  })));
+
+  clearSolid();
+  SOLID.elements = els.filter(el => el.img);
+  SOLID.vb = vb;
+  return SOLID.elements.length;
+}
+
+function clearSolid() {
+  for (const el of SOLID.elements) if (el.url) URL.revokeObjectURL(el.url);
+  SOLID.elements = [];
+}
+
+function solidLayout(w, h) {
+  // Shared by canvas + SVG export: overall fit, per-element pulse scales
+  // and the sideways displacement that makes room for the scaled element
+  const S = SOLID, vb = S.vb;
+  const k = Math.min(w / vb.vw, h / vb.vh) * S.scale;
+  const ox0 = (w - vb.vw * k) / 2;
+  const oy0 = (h - vb.vh * k) / 2 + S.posY * h;
+  const N = S.elements.length;
+
+  const scales = S.elements.map((_, i) => {
+    if (!S.pulse || N === 0) return 1;
+    const p = (time * S.speed) % N;
+    let d = Math.abs(p - (i + 0.5));
+    d = Math.min(d, N - d); // wrap around
+    const hw = 0.75;        // pulse window half-width, in letters
+    const f = d < hw ? Math.cos((d / hw) * Math.PI / 2) ** 2 : 0;
+    return 1 + S.amp * f;
+  });
+
+  const dx = S.elements.map((el, i) => {
+    let acc = 0;
+    for (let kk = 0; kk < N; kk++) {
+      if (kk === i) continue;
+      const other = S.elements[kk];
+      acc += (scales[kk] - 1) * other.bw * 0.5 * Math.sign(el.cx - other.cx);
+    }
+    return acc;
+  });
+
+  return { k, ox0, oy0, scales, dx };
+}
+
+function drawSolid(w, h) {
+  const S = SOLID;
+  if (!S.elements.length) return;
+  const { k, ox0, oy0, scales, dx } = solidLayout(w, h);
+  S.elements.forEach((el, i) => {
+    const s = scales[i];
+    const cxp = ox0 + (el.cx + dx[i] - S.vb.minx) * k;
+    const cyp = oy0 + (el.cy - S.vb.miny) * k;
+    const dw = el.bw * k * s, dh = el.bh * k * s;
+    const src = S.recolor ? tintedCanvas(el, S.color) : el.img;
+    ctx.drawImage(src, cxp - dw / 2, cyp - dh / 2, dw, dh);
+  });
+}
+
 let effectors = [];
 let fxCounter = 0;
 let playing = true;
@@ -371,6 +537,8 @@ function render() {
       }
     }
   });
+
+  drawSolid(w, h);
 
   // Effector outlines
   if (G.showFx) {
@@ -726,6 +894,46 @@ $("removeMask").addEventListener("click", () => {
   $("maskControls").style.display = "none";
 });
 
+/* ── Solid SVG overlay ── */
+
+$("uploadSolid").addEventListener("click", () => $("solidFile").click());
+$("solidFile").addEventListener("change", async e => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  const count = await loadSolidSvg(await file.text());
+  if (count === 0) {
+    alert(`Could not read any individual shapes from "${file.name}".`);
+    return;
+  }
+  $("solidName").textContent = `${file.name} — ${count} element${count > 1 ? "s" : ""}`;
+  $("solidControls").style.display = "block";
+});
+
+$("solidScale").addEventListener("input", e => {
+  SOLID.scale = parseFloat(e.target.value) / 100;
+  $("v-solidScale").textContent = e.target.value + "%";
+});
+$("solidY").addEventListener("input", e => {
+  SOLID.posY = parseFloat(e.target.value) / 100;
+  $("v-solidY").textContent = e.target.value + "%";
+});
+$("solidPulse").addEventListener("change", e => SOLID.pulse = e.target.checked);
+$("solidAmp").addEventListener("input", e => {
+  SOLID.amp = parseFloat(e.target.value) / 100;
+  $("v-solidAmp").textContent = "+" + e.target.value + "%";
+});
+$("solidSpeed").addEventListener("input", e => {
+  SOLID.speed = parseFloat(e.target.value);
+  $("v-solidSpeed").textContent = SOLID.speed.toFixed(2) + " l/s";
+});
+$("solidRecolor").addEventListener("change", e => SOLID.recolor = e.target.checked);
+$("solidColor").addEventListener("input", e => SOLID.color = e.target.value);
+$("removeSolid").addEventListener("click", () => {
+  clearSolid();
+  $("solidControls").style.display = "none";
+});
+
 /* ═══════════════════════ Play / pause ═══════════════════════ */
 
 const btnPlay = $("btnPlay");
@@ -796,6 +1004,21 @@ const SVG_SHAPE_DEFS = {
   bowtie:     '<path d="M -0.5 -0.5 L 0 0 L -0.5 0.5 Z M 0.5 -0.5 L 0 0 L 0.5 0.5 Z"/>',
   hook:       '<path d="M -0.5 -0.5 L 0.5 -0.5 L 0.5 0.5 Q -0.5 0.5 -0.5 -0.5 Z"/>',
 };
+
+/* Rewrite fills/strokes in an SVG fragment to a flat color */
+function recolorFragment(markup, color) {
+  const doc = new DOMParser().parseFromString(
+    `<svg xmlns="http://www.w3.org/2000/svg">${markup}</svg>`, "image/svg+xml");
+  const root = doc.documentElement;
+  for (const el of root.querySelectorAll("*")) {
+    el.removeAttribute("style");
+    if (el.getAttribute("fill") !== "none") el.setAttribute("fill", color);
+    const st = el.getAttribute("stroke");
+    if (st && st !== "none") el.setAttribute("stroke", color);
+  }
+  const ser = new XMLSerializer();
+  return [...root.childNodes].map(nd => ser.serializeToString(nd)).join("");
+}
 
 /* Inline a custom SVG as real vector nodes (Illustrator cannot read
    SVG-format images embedded via data URIs — it reports the file as
@@ -897,6 +1120,25 @@ function exportSVG() {
     }
     parts.push("</g>");
   });
+
+  // Solid SVG overlay: each element inlined as vectors with its
+  // current pulse scale and displacement
+  if (SOLID.elements.length) {
+    const n6 = v => +v.toFixed(6);
+    const { k, ox0, oy0, scales, dx } = solidLayout(w, h);
+    parts.push(
+      `<g transform="translate(${n6(ox0)} ${n6(oy0)}) scale(${n6(k)}) ` +
+      `translate(${n6(-SOLID.vb.minx)} ${n6(-SOLID.vb.miny)})">`
+    );
+    SOLID.elements.forEach((el, i) => {
+      const t =
+        `translate(${n6(el.cx + dx[i])} ${n6(el.cy)}) scale(${n6(scales[i])}) ` +
+        `translate(${n6(-el.cx)} ${n6(-el.cy)})`;
+      const markup = SOLID.recolor ? recolorFragment(el.markup, SOLID.color) : el.markup;
+      parts.push(`<g transform="${t}">${markup}</g>`);
+    });
+    parts.push("</g>");
+  }
 
   parts.push("</svg>");
 
