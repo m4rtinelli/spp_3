@@ -60,7 +60,8 @@ function makeLayer() {
   return {
     id: ++layerCounter,
     visible: true,
-    useMask: true, // whether the shape mask limits this layer
+    useMask: true,          // whether the shape mask limits this layer
+    maskRegion: "inside",   // inside | contour | outside
     shapes: ["triangle"], // >1 = random mix across the grid
     fg: LAYER_COLORS[(layerCounter - 1) % LAYER_COLORS.length],
     shapeScale: 1,
@@ -251,7 +252,7 @@ function solidLayout(w, h) {
 const solidMaskCv = document.createElement("canvas");
 
 function getSolidMaskMap(w, h, cols, rows, cell, cellH) {
-  if (!(SOLID.asMask && SOLID.elements.length)) return null;
+  if (!SOLID.elements.length) return null;
 
   // Supersample: S×S subpixels per cell. Letterform strokes are thin, so
   // sampling at 1px/cell dilutes them below any usable threshold — instead
@@ -287,6 +288,99 @@ function getSolidMaskMap(w, h, cols, rows, cell, cellH) {
     }
   }
   return map;
+}
+
+/* ═══════════════════════ Contour ring ═══════════════════════ */
+/* A pulsating band that follows the silhouette's outline. Layers assigned
+   to the "contour" region generate shapes only inside that band. */
+
+const CONTOUR = {
+  mode: "ripple",  // ripple = travels outward | breathe = thickness pulses
+  width: 3,        // band thickness, in cells
+  speed: 2,        // cells/sec (ripple) or cycles/sec (breathe)
+  reach: 14,       // how far the ripple travels before wrapping, in cells
+};
+
+function contourBand() {
+  const C = CONTOUR;
+  if (C.mode === "breathe") {
+    const f = 0.5 + 0.5 * Math.sin(time * C.speed * Math.PI * 2);
+    return { from: 0, to: C.width * f };
+  }
+  const cyc = (time * C.speed) % (C.reach + C.width);
+  return { from: cyc, to: cyc + C.width };
+}
+
+/* Chamfer distance transform: distance (in cells) from each cell to the
+   nearest silhouette cell. Silhouette cells themselves are 0. */
+function distanceOutside(sil, cols, rows) {
+  const INF = 1e9, a = 1, b = Math.SQRT2;
+  const d = new Float32Array(cols * rows);
+  for (let i = 0; i < d.length; i++) d[i] = sil[i] ? 0 : INF;
+
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const i = y * cols + x;
+      let v = d[i];
+      if (x > 0) v = Math.min(v, d[i - 1] + a);
+      if (y > 0) v = Math.min(v, d[i - cols] + a);
+      if (x > 0 && y > 0) v = Math.min(v, d[i - cols - 1] + b);
+      if (x < cols - 1 && y > 0) v = Math.min(v, d[i - cols + 1] + b);
+      d[i] = v;
+    }
+  }
+  for (let y = rows - 1; y >= 0; y--) {
+    for (let x = cols - 1; x >= 0; x--) {
+      const i = y * cols + x;
+      let v = d[i];
+      if (x < cols - 1) v = Math.min(v, d[i + 1] + a);
+      if (y < rows - 1) v = Math.min(v, d[i + cols] + a);
+      if (x < cols - 1 && y < rows - 1) v = Math.min(v, d[i + cols + 1] + b);
+      if (x > 0 && y < rows - 1) v = Math.min(v, d[i + cols - 1] + b);
+      d[i] = v;
+    }
+  }
+  return d;
+}
+
+/* Everything the per-cell mask test needs for this frame.
+   Silhouette source is deterministic (never depends on layer setup):
+   the solid SVG when it is the mask or when no mask file is active,
+   otherwise the uploaded mask file. */
+function buildMaskContext(w, h, cols, rows, cell, cellH) {
+  const empty = { sil: null, dist: null, band: contourBand() };
+  if (!layers.some(ly => ly.visible && ly.useMask)) return empty;
+
+  const staticActive = MASK.enabled && MASK.img;
+  const useSolid = SOLID.elements.length && (SOLID.asMask || !staticActive);
+
+  const sil = useSolid
+    ? getSolidMaskMap(w, h, cols, rows, cell, cellH)
+    : getMaskMap(w, h, cols, rows, cell, cellH);
+  if (!sil) return empty;
+
+  const needsDist = layers.some(ly =>
+    ly.visible && ly.useMask && ly.maskRegion === "contour");
+
+  return {
+    sil,
+    dist: needsDist ? distanceOutside(sil, cols, rows) : null,
+    band: contourBand(),
+  };
+}
+
+function cellAllowed(ly, mc, idx) {
+  if (!ly.useMask || !mc.sil) return true;
+  const inside = mc.sil[idx] === 1;
+  switch (ly.maskRegion) {
+    case "contour": {
+      if (inside || !mc.dist) return false;
+      const d = mc.dist[idx];
+      return d > mc.band.from && d <= mc.band.to;
+    }
+    case "outside": return !inside;
+    default:        return inside;
+  }
 }
 
 function drawSolid(w, h) {
@@ -568,10 +662,8 @@ function render() {
 
   const fxState = getFxState(w, h);
 
-  // Shape mask: cells outside the silhouette are skipped entirely.
-  // The animated solid-SVG mask takes precedence over the static file mask.
-  const mm = getSolidMaskMap(w, h, cols, rows, cell, cellH) ||
-             getMaskMap(w, h, cols, rows, cell, cellH);
+  // Masking: each layer draws only in its assigned region of the silhouette
+  const mc = buildMaskContext(w, h, cols, rows, cell, cellH);
 
   layers.forEach((ly, li) => {
     if (!ly.visible) return;
@@ -580,7 +672,7 @@ function render() {
 
     for (let j = 0; j < rows; j++) {
       for (let i = 0; i < cols; i++) {
-        if (ly.useMask && mm && !mm[j * cols + i]) continue;
+        if (!cellAllowed(ly, mc, j * cols + i)) continue;
         const c = cellState(ly, i, j, cols, rows, cell, cellH, fxState);
         if (c.scl <= 0.01) continue;
 
@@ -699,6 +791,7 @@ function syncLayerUI() {
   $("mirrorDelay").checked = ly.mirrorDelay;
   $("fgColor").value = ly.fg;
   $("layerMask").checked = ly.useMask;
+  $("maskRegion").value = ly.maskRegion;
   updateShapeButtons();
   document.querySelectorAll(".lyr-ind").forEach(el =>
     el.textContent = "L" + ly.id);
@@ -789,6 +882,19 @@ function buildLayerUI() {
 $("addLayer").addEventListener("click", () => {
   layers.push(makeLayer());
   activeLayer = layers.length - 1;
+  buildLayerUI();
+  syncLayerUI();
+});
+
+$("maskRegion").addEventListener("change", e => {
+  activeL().maskRegion = e.target.value;
+});
+
+$("addContourLayer").addEventListener("click", () => {
+  const ly = makeLayer();
+  ly.maskRegion = "contour";
+  layers.unshift(ly);          // behind the others, like a background halo
+  activeLayer = 0;
   buildLayerUI();
   syncLayerUI();
 });
@@ -973,6 +1079,28 @@ $("removeMask").addEventListener("click", () => {
   MASK.svgText = null;
   if (maskUrl) { URL.revokeObjectURL(maskUrl); maskUrl = null; }
   $("maskControls").style.display = "none";
+});
+
+/* ── Contour ring ── */
+
+$("contourMode").addEventListener("change", e => {
+  CONTOUR.mode = e.target.value;
+  $("contourReachRow").style.display = CONTOUR.mode === "ripple" ? "block" : "none";
+  $("v-contourSpeed").textContent =
+    CONTOUR.speed.toFixed(2) + (CONTOUR.mode === "ripple" ? " c/s" : " Hz");
+});
+$("contourWidth").addEventListener("input", e => {
+  CONTOUR.width = parseFloat(e.target.value);
+  $("v-contourWidth").textContent = CONTOUR.width + " cells";
+});
+$("contourSpeed").addEventListener("input", e => {
+  CONTOUR.speed = parseFloat(e.target.value);
+  $("v-contourSpeed").textContent =
+    CONTOUR.speed.toFixed(2) + (CONTOUR.mode === "ripple" ? " c/s" : " Hz");
+});
+$("contourReach").addEventListener("input", e => {
+  CONTOUR.reach = parseFloat(e.target.value);
+  $("v-contourReach").textContent = CONTOUR.reach + " cells";
 });
 
 /* ── Solid SVG overlay ── */
@@ -1168,10 +1296,9 @@ function exportSVG() {
     `width="${w}" height="${h}" viewBox="0 0 ${w} ${h}">`
   );
 
-  // Shape mask: same per-cell occupancy map as the canvas renderer,
-  // so masked-out cells simply don't exist in the exported file
-  const mm = getSolidMaskMap(w, h, cols, rows, cell, cellH) ||
-             getMaskMap(w, h, cols, rows, cell, cellH);
+  // Same per-cell mask context as the canvas renderer, so masked-out
+  // cells simply don't exist in the exported file
+  const mc = buildMaskContext(w, h, cols, rows, cell, cellH);
 
   // One def per shape per layer (ids: s{layer}-{shape index})
   parts.push("<defs>");
@@ -1195,7 +1322,7 @@ function exportSVG() {
     parts.push(`<g fill="${ly.fg}">`);
     for (let j = 0; j < rows; j++) {
       for (let i = 0; i < cols; i++) {
-        if (ly.useMask && mm && !mm[j * cols + i]) continue;
+        if (!cellAllowed(ly, mc, j * cols + i)) continue;
         const c = cellState(ly, i, j, cols, rows, cell, cellH, fxState);
         if (c.scl <= 0.01) continue;
         const k = size * c.scl;
