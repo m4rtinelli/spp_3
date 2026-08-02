@@ -14,7 +14,13 @@
     <h1>GRAPH<span>ISM</span></h1>
     <button id="btnPlay" class="primary">⏸ Pause</button>
     <button id="btnRandom">🎲 Randomize</button>
+    <button id="btnUndo" title="Undo (Ctrl+Z)">↶</button>
+    <button id="btnRedo" title="Redo (Ctrl+Shift+Z)">↷</button>
     <div class="spacer"></div>
+    <button id="btnNew" title="New project">New</button>
+    <button id="btnOpen" title="Open project (Ctrl+O)">Open</button>
+    <button id="btnSave" title="Save project (Ctrl+S)">Save</button>
+    <input type="file" id="projectFile" accept=".json,application/json" hidden>
     <select id="recDur" title="Recording length">
       <option value="2">2 s</option>
       <option value="5" selected>5 s</option>
@@ -266,6 +272,7 @@
     <span><kbd>R</kbd> randomize</span>
     <span><kbd>E</kbd> export PNG</span>
     <span><kbd>S</kbd> export SVG</span>
+    <span><kbd>Ctrl</kbd>+<kbd>Z</kbd> undo</span>
     <div class="spacer"></div>
     <span id="fps"></span>
   </footer>

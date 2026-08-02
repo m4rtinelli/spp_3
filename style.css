@@ -58,6 +58,8 @@ button:active { background: #ffffff; color: #000000; }
 button.primary { background: #ffffff; color: #000000; border-color: #ffffff; }
 button.primary:hover { background: #ffffff; border-color: #ffffff; }
 button.small { padding: 4px 10px; font-size: 11px; }
+button:disabled { opacity: .35; cursor: default; }
+button:disabled:hover { border-color: var(--border); background: transparent; }
 button.danger:hover { border-color: var(--border-strong); color: var(--text); }
 
 /* ── Layout ──────────────────────────────── */

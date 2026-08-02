@@ -12,7 +12,7 @@ const G = {
 
 /* Shape mask: an uploaded SVG whose silhouette defines WHERE cells exist —
    shapes are only generated in grid cells that fall inside the outline */
-const MASK = { img: null, svgText: null, scale: 1, invert: false, enabled: true, version: 0 };
+const MASK = { img: null, svgText: null, name: null, scale: 1, invert: false, enabled: true, version: 0 };
 
 function maskRect(w, h) {
   // Fit the mask inside the canvas (contain, centered), scaled by MASK.scale
@@ -92,6 +92,8 @@ let currentFg = "#000000"; // color of the layer being drawn, used to tint custo
 const SOLID = {
   elements: [],                                   // {markup,bx,by,bw,bh,cx,cy,img,tints,url}
   vb: { minx: 0, miny: 0, vw: 100, vh: 100 },     // original viewBox
+  srcText: null,                                  // original file, for save/restore
+  name: null,
   scale: 1,
   posY: 0,        // vertical offset, fraction of canvas height
   pulse: true,
@@ -597,6 +599,10 @@ function getFxState(w, h) {
     });
 }
 
+/* Never trust a shape name blindly: restored projects may reference a
+   custom SVG that is no longer loaded */
+function shapeFn(name) { return SHAPES[name] || SHAPES.triangle; }
+
 function cellShape(ly, li, i, j) {
   // Stable random assignment when several shapes are selected.
   // Seeds are offset per layer so layers don't share the same arrangement,
@@ -680,7 +686,7 @@ function render() {
         ctx.translate(c.cx, c.cy);
         ctx.rotate(c.rot);
         if (c.flip) ctx.scale(-1, 1);
-        SHAPES[cellShape(ly, li, i, j)](ctx, size * c.scl);
+        shapeFn(cellShape(ly, li, i, j))(ctx, size * c.scl);
         ctx.restore();
       }
     }
@@ -810,6 +816,7 @@ function moveLayer(idx, dir) {
   else if (activeLayer === to) activeLayer = idx;
   buildLayerUI();
   syncLayerUI();
+  pushHistory();
 }
 
 function buildLayerUI() {
@@ -850,6 +857,7 @@ function buildLayerUI() {
       e.stopPropagation();
       ly.visible = !ly.visible;
       buildLayerUI();
+      pushHistory();
     });
 
     row.append(sw, name, btnUp, btnDown, btnVis);
@@ -865,6 +873,7 @@ function buildLayerUI() {
         if (activeLayer >= layers.length) activeLayer = layers.length - 1;
         buildLayerUI();
         syncLayerUI();
+        pushHistory();
       });
       row.appendChild(btnDel);
     }
@@ -884,6 +893,7 @@ $("addLayer").addEventListener("click", () => {
   activeLayer = layers.length - 1;
   buildLayerUI();
   syncLayerUI();
+  pushHistory();
 });
 
 $("maskRegion").addEventListener("change", e => {
@@ -897,6 +907,7 @@ $("addContourLayer").addEventListener("click", () => {
   activeLayer = 0;
   buildLayerUI();
   syncLayerUI();
+  pushHistory();
 });
 
 /* ═══════════════════════ Shape picker ═══════════════════════ */
@@ -921,6 +932,7 @@ function selectShape(name, additive) {
     activeL().shapes = [name];
   }
   updateShapeButtons();
+  pushHistory();
 }
 
 function addShapeButton(name, iconHTML, title) {
@@ -979,12 +991,14 @@ function tintedCanvas(entry, color) {
   return oc;
 }
 
-function addCustomShape(fileName, svgText) {
-  // Resolves with the new shape's name (or null if the file was invalid)
+function addCustomShape(fileName, svgText, forcedName) {
+  // Resolves with the new shape's name (or null if the file was invalid).
+  // forcedName is used when restoring a project, so layers that reference
+  // the shape by name keep pointing at the same artwork.
   return new Promise(resolve => {
     const cleaned = prepareSvg(svgText);
     if (!cleaned) {
-      alert(`"${fileName}" is not a valid SVG file.`);
+      if (!forcedName) alert(`"${fileName}" is not a valid SVG file.`);
       resolve(null);
       return;
     }
@@ -992,8 +1006,8 @@ function addCustomShape(fileName, svgText) {
     const url = URL.createObjectURL(new Blob([cleaned], { type: "image/svg+xml" }));
     const img = new Image();
     img.onload = () => {
-      const name = "custom" + (++customCounter);
-      const entry = { img, svgText: cleaned, tints: new Map() };
+      const name = forcedName || ("custom" + (++customCounter));
+      const entry = { img, svgText: cleaned, tints: new Map(), url, fileName };
       CUSTOM_SHAPES[name] = entry;
 
       SHAPES[name] = (c, s) => {
@@ -1018,6 +1032,7 @@ function addCustomShape(fileName, svgText) {
           if (ly.shapes.length === 0) ly.shapes = ["triangle"];
         }
         updateShapeButtons();
+        pushHistory();
       });
       resolve(name);
     };
@@ -1039,8 +1054,19 @@ $("svgFile").addEventListener("change", async e => {
     // Select all shapes uploaded in this batch together (on the active layer)
     activeL().shapes = names;
     updateShapeButtons();
+    pushHistory();
   }
 });
+
+function clearCustomShapes() {
+  for (const [name, entry] of Object.entries(CUSTOM_SHAPES)) {
+    if (entry.url) URL.revokeObjectURL(entry.url);
+    delete SHAPES[name];
+    delete CUSTOM_SHAPES[name];
+    const b = shapePicker.querySelector(`button[data-shape="${name}"]`);
+    if (b) b.remove();
+  }
+}
 
 /* ── Clip mask ── */
 
@@ -1051,21 +1077,41 @@ $("maskFile").addEventListener("change", async e => {
   const file = e.target.files[0];
   e.target.value = "";
   if (!file) return;
-  const cleaned = prepareSvg(await file.text());
-  if (!cleaned) { alert(`"${file.name}" is not a valid SVG file.`); return; }
-  if (maskUrl) URL.revokeObjectURL(maskUrl);
-  maskUrl = URL.createObjectURL(new Blob([cleaned], { type: "image/svg+xml" }));
-  const img = new Image();
-  img.onload = () => {
-    MASK.img = img;
-    MASK.svgText = cleaned;
-    MASK.version++;
-    $("maskName").textContent = file.name;
-    $("maskControls").style.display = "block";
-  };
-  img.onerror = () => alert(`Could not load "${file.name}".`);
-  img.src = maskUrl;
+  const ok = await setMaskFromText(await file.text(), file.name);
+  if (!ok) { alert(`"${file.name}" is not a valid SVG file.`); return; }
+  pushHistory();
 });
+
+/* Shared by uploads and by restoring a saved/undone state */
+function setMaskFromText(svgText, fileName) {
+  return new Promise(resolve => {
+    const cleaned = prepareSvg(svgText);
+    if (!cleaned) { resolve(false); return; }
+    if (maskUrl) URL.revokeObjectURL(maskUrl);
+    maskUrl = URL.createObjectURL(new Blob([cleaned], { type: "image/svg+xml" }));
+    const img = new Image();
+    img.onload = () => {
+      MASK.img = img;
+      MASK.svgText = cleaned;
+      MASK.name = fileName;
+      MASK.version++;
+      $("maskName").textContent = fileName;
+      $("maskControls").style.display = "block";
+      resolve(true);
+    };
+    img.onerror = () => resolve(false);
+    img.src = maskUrl;
+  });
+}
+
+function clearMask() {
+  MASK.img = null;
+  MASK.svgText = null;
+  MASK.name = null;
+  MASK.version++;
+  if (maskUrl) { URL.revokeObjectURL(maskUrl); maskUrl = null; }
+  $("maskControls").style.display = "none";
+}
 
 $("maskScale").addEventListener("input", e => {
   MASK.scale = parseFloat(e.target.value) / 100;
@@ -1074,12 +1120,7 @@ $("maskScale").addEventListener("input", e => {
 $("maskEnabled").addEventListener("change", e => MASK.enabled = e.target.checked);
 $("layerMask").addEventListener("change", e => activeL().useMask = e.target.checked);
 $("maskInvert").addEventListener("change", e => MASK.invert = e.target.checked);
-$("removeMask").addEventListener("click", () => {
-  MASK.img = null;
-  MASK.svgText = null;
-  if (maskUrl) { URL.revokeObjectURL(maskUrl); maskUrl = null; }
-  $("maskControls").style.display = "none";
-});
+$("removeMask").addEventListener("click", () => { clearMask(); pushHistory(); });
 
 /* ── Contour ring ── */
 
@@ -1110,14 +1151,24 @@ $("solidFile").addEventListener("change", async e => {
   const file = e.target.files[0];
   e.target.value = "";
   if (!file) return;
-  const count = await loadSolidSvg(await file.text());
+  const count = await setSolidFromText(await file.text(), file.name);
   if (count === 0) {
     alert(`Could not read any individual shapes from "${file.name}".`);
     return;
   }
-  $("solidName").textContent = `${file.name} — ${count} element${count > 1 ? "s" : ""}`;
-  $("solidControls").style.display = "block";
+  pushHistory();
 });
+
+/* Shared by uploads and by restoring a saved/undone state */
+async function setSolidFromText(svgText, fileName) {
+  const count = await loadSolidSvg(svgText);
+  if (count === 0) return 0;
+  SOLID.srcText = svgText;
+  SOLID.name = fileName;
+  $("solidName").textContent = `${fileName} — ${count} element${count > 1 ? "s" : ""}`;
+  $("solidControls").style.display = "block";
+  return count;
+}
 
 $("solidScale").addEventListener("input", e => {
   SOLID.scale = parseFloat(e.target.value) / 100;
@@ -1148,7 +1199,10 @@ $("solidRecolor").addEventListener("change", e => SOLID.recolor = e.target.check
 $("solidColor").addEventListener("input", e => SOLID.color = e.target.value);
 $("removeSolid").addEventListener("click", () => {
   clearSolid();
+  SOLID.srcText = null;
+  SOLID.name = null;
   $("solidControls").style.display = "none";
+  pushHistory();
 });
 
 /* ═══════════════════════ Play / pause ═══════════════════════ */
@@ -1184,6 +1238,7 @@ function randomize() {
     ly.scaleAmt = Math.random() < 0.3 ? rnd(0.1, 0.5) : 0;
   }
   syncLayerUI();
+  pushHistory();
 }
 $("btnRandom").addEventListener("click", randomize);
 
@@ -1436,11 +1491,22 @@ btnRecord.addEventListener("click", startRecording);
 /* ═══════════════════════ Keyboard shortcuts ═══════════════════════ */
 
 window.addEventListener("keydown", e => {
+  const k = e.key.toLowerCase();
+
+  // Ctrl/Cmd shortcuts work even while a control has focus
+  if (e.ctrlKey || e.metaKey) {
+    if (k === "z") { e.preventDefault(); travelHistory(e.shiftKey ? 1 : -1); }
+    else if (k === "y") { e.preventDefault(); travelHistory(1); }
+    else if (k === "s") { e.preventDefault(); saveProject(); }
+    else if (k === "o") { e.preventDefault(); $("projectFile").click(); }
+    return;
+  }
+
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
   if (e.code === "Space") { e.preventDefault(); togglePlay(); }
-  if (e.key === "r" || e.key === "R") randomize();
-  if (e.key === "e" || e.key === "E") exportPNG();
-  if (e.key === "s" || e.key === "S") exportSVG();
+  if (k === "r") randomize();
+  if (k === "e") exportPNG();
+  if (k === "s") exportSVG();
 });
 
 /* ═══════════════════════ Effector UI ═══════════════════════ */
@@ -1503,6 +1569,7 @@ function buildFxUI() {
     btnToggle.addEventListener("click", () => {
       fx.enabled = !fx.enabled;
       btnToggle.textContent = fx.enabled ? "On" : "Off";
+      pushHistory();
     });
 
     const btnDel = document.createElement("button");
@@ -1511,6 +1578,7 @@ function buildFxUI() {
     btnDel.addEventListener("click", () => {
       effectors = effectors.filter(f => f !== fx);
       buildFxUI();
+      pushHistory();
     });
 
     actions.append(btnToggle, btnDel);
@@ -1540,11 +1608,232 @@ function buildFxUI() {
   }
 }
 
-$("addEffector").addEventListener("click", () => makeEffector());
+$("addEffector").addEventListener("click", () => { makeEffector(); pushHistory(); });
+
+/* ═══════════════════════ Project state ═══════════════════════ */
+/* One serializable snapshot of everything, shared by undo/redo,
+   save-to-file, open-from-file and new-project. */
+
+function serializeState() {
+  return {
+    format: "graphism-project",
+    version: 1,
+    G: { ...G },
+    contour: { ...CONTOUR },
+    layers: layers.map(ly => ({ ...ly, shapes: [...ly.shapes] })),
+    activeLayer,
+    effectors: effectors.map(fx => ({ ...fx })),
+    counters: { layerCounter, fxCounter, customCounter },
+    customs: Object.entries(CUSTOM_SHAPES).map(([name, e]) =>
+      ({ name, file: e.fileName || "shape.svg", svg: e.svgText })),
+    mask: MASK.svgText
+      ? { svg: MASK.svgText, file: MASK.name, scale: MASK.scale,
+          invert: MASK.invert, enabled: MASK.enabled }
+      : null,
+    solid: SOLID.srcText
+      ? { svg: SOLID.srcText, file: SOLID.name, scale: SOLID.scale, posY: SOLID.posY,
+          pulse: SOLID.pulse, mode: SOLID.mode, amp: SOLID.amp, speed: SOLID.speed,
+          recolor: SOLID.recolor, color: SOLID.color, asMask: SOLID.asMask }
+      : null,
+  };
+}
+
+async function applyState(s) {
+  if (!s || s.format !== "graphism-project") throw new Error("Not a Graphism project file");
+  historySuspended = true;
+  try {
+    Object.assign(G, s.G);
+    Object.assign(CONTOUR, s.contour);
+
+    layers = s.layers.map(ly => ({ ...ly, shapes: [...ly.shapes] }));
+    if (!layers.length) layers = [makeLayer()];
+    activeLayer = Math.min(Math.max(0, s.activeLayer | 0), layers.length - 1);
+    effectors = s.effectors.map(fx => ({ ...fx }));
+    ({ layerCounter, fxCounter, customCounter } = s.counters);
+
+    // Custom shapes: rebuild only when the set actually differs
+    const cur = JSON.stringify(
+      Object.entries(CUSTOM_SHAPES).map(([n, e]) => [n, e.svgText]));
+    const tgt = JSON.stringify((s.customs || []).map(c => [c.name, c.svg]));
+    if (cur !== tgt) {
+      clearCustomShapes();
+      for (const c of s.customs || []) await addCustomShape(c.file, c.svg, c.name);
+    }
+
+    // Mask
+    if (!s.mask) {
+      clearMask();
+    } else {
+      if (s.mask.svg !== MASK.svgText) await setMaskFromText(s.mask.svg, s.mask.file);
+      MASK.scale = s.mask.scale;
+      MASK.invert = s.mask.invert;
+      MASK.enabled = s.mask.enabled;
+    }
+
+    // Solid SVG
+    if (!s.solid) {
+      clearSolid();
+      SOLID.srcText = null;
+      SOLID.name = null;
+      $("solidControls").style.display = "none";
+    } else {
+      if (s.solid.svg !== SOLID.srcText) await setSolidFromText(s.solid.svg, s.solid.file);
+      Object.assign(SOLID, {
+        scale: s.solid.scale, posY: s.solid.posY, pulse: s.solid.pulse,
+        mode: s.solid.mode, amp: s.solid.amp, speed: s.solid.speed,
+        recolor: s.solid.recolor, color: s.solid.color, asMask: s.solid.asMask,
+      });
+    }
+
+    syncGlobalUI();
+    buildLayerUI();
+    syncLayerUI();
+    buildFxUI();
+    fitCanvas();
+  } finally {
+    historySuspended = false;
+  }
+}
+
+/* Push global (non per-layer) values back into their controls */
+function syncGlobalUI() {
+  $("aspect").value = G.aspect;
+  $("bgColor").value = G.bg;
+  $("cols").value = G.cols;
+  $("v-cols").textContent = G.cols;
+  $("showFx").checked = G.showFx;
+  $("tintSvg").checked = G.tintSvg;
+
+  $("contourMode").value = CONTOUR.mode;
+  $("contourWidth").value = CONTOUR.width;
+  $("v-contourWidth").textContent = CONTOUR.width + " cells";
+  $("contourSpeed").value = CONTOUR.speed;
+  $("v-contourSpeed").textContent =
+    CONTOUR.speed.toFixed(2) + (CONTOUR.mode === "ripple" ? " c/s" : " Hz");
+  $("contourReach").value = CONTOUR.reach;
+  $("v-contourReach").textContent = CONTOUR.reach + " cells";
+  $("contourReachRow").style.display = CONTOUR.mode === "ripple" ? "block" : "none";
+
+  if (MASK.svgText) {
+    $("maskControls").style.display = "block";
+    $("maskName").textContent = MASK.name || "";
+    $("maskScale").value = Math.round(MASK.scale * 100);
+    $("v-maskScale").textContent = Math.round(MASK.scale * 100) + "%";
+    $("maskEnabled").checked = MASK.enabled;
+    $("maskInvert").checked = MASK.invert;
+  }
+
+  if (SOLID.srcText) {
+    $("solidControls").style.display = "block";
+    $("solidScale").value = Math.round(SOLID.scale * 100);
+    $("v-solidScale").textContent = Math.round(SOLID.scale * 100) + "%";
+    $("solidY").value = Math.round(SOLID.posY * 100);
+    $("v-solidY").textContent = Math.round(SOLID.posY * 100) + "%";
+    $("solidPulse").checked = SOLID.pulse;
+    $("solidMode").value = SOLID.mode;
+    $("solidAmp").value = Math.round(SOLID.amp * 100);
+    $("v-solidAmp").textContent = "+" + Math.round(SOLID.amp * 100) + "%";
+    $("solidSpeed").value = SOLID.speed;
+    $("v-solidSpeed").textContent =
+      SOLID.speed.toFixed(2) + (SOLID.mode === "together" ? " Hz" : " l/s");
+    $("solidRecolor").checked = SOLID.recolor;
+    $("solidColor").value = SOLID.color;
+    $("solidAsMask").checked = SOLID.asMask;
+  }
+}
+
+/* ═══════════════════════ Undo / redo ═══════════════════════ */
+
+const HISTORY_LIMIT = 60;
+let undoStack = [];
+let historyIndex = -1;
+let historySuspended = false;
+let travelBusy = false;
+
+function pushHistory() {
+  if (historySuspended) return;
+  const snap = JSON.stringify(serializeState());
+  if (snap === undoStack[historyIndex]) return; // nothing actually changed
+  undoStack = undoStack.slice(0, historyIndex + 1);
+  undoStack.push(snap);
+  if (undoStack.length > HISTORY_LIMIT) undoStack.shift();
+  historyIndex = undoStack.length - 1;
+  updateHistoryButtons();
+}
+
+async function travelHistory(step) {
+  const to = historyIndex + step;
+  if (travelBusy || to < 0 || to >= undoStack.length) return;
+  travelBusy = true;
+  try {
+    historyIndex = to;
+    await applyState(JSON.parse(undoStack[to]));
+  } finally {
+    travelBusy = false;
+    updateHistoryButtons();
+  }
+}
+
+function updateHistoryButtons() {
+  $("btnUndo").disabled = historyIndex <= 0;
+  $("btnRedo").disabled = historyIndex >= undoStack.length - 1;
+}
+
+function resetHistory() {
+  undoStack = [JSON.stringify(serializeState())];
+  historyIndex = 0;
+  updateHistoryButtons();
+}
+
+$("btnUndo").addEventListener("click", () => travelHistory(-1));
+$("btnRedo").addEventListener("click", () => travelHistory(1));
+
+// Any committed control change (slider release, select, checkbox, color)
+document.addEventListener("change", e => {
+  if (e.target.type === "file") return; // those snapshot after loading
+  pushHistory();
+});
+
+/* ═══════════════════════ Save / open / new ═══════════════════════ */
+
+let projectName = "untitled";
+
+function saveProject() {
+  const json = JSON.stringify(serializeState());
+  download(new Blob([json], { type: "application/json" }),
+    `${projectName}-${Date.now()}.graphism.json`);
+}
+
+$("btnSave").addEventListener("click", saveProject);
+
+$("btnOpen").addEventListener("click", () => $("projectFile").click());
+$("projectFile").addEventListener("change", async e => {
+  const file = e.target.files[0];
+  e.target.value = "";
+  if (!file) return;
+  try {
+    await applyState(JSON.parse(await file.text()));
+    projectName = file.name.replace(/\.graphism\.json$|\.json$/i, "");
+    resetHistory();
+  } catch (err) {
+    alert("Could not open that project file.\n\n" + err.message);
+  }
+});
+
+let INITIAL_STATE = null;
+
+$("btnNew").addEventListener("click", async () => {
+  if (!confirm("Start a new project? Unsaved changes will be lost.")) return;
+  await applyState(JSON.parse(INITIAL_STATE));
+  projectName = "untitled";
+  resetHistory();
+});
 
 /* ═══════════════════════ Go ═══════════════════════ */
 
 fitCanvas();
 buildLayerUI();
 syncLayerUI();
+resetHistory();
+INITIAL_STATE = undoStack[0];
 requestAnimationFrame(loop);
