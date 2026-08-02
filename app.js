@@ -98,6 +98,7 @@ const SOLID = {
   speed: 1,       // letters per second
   recolor: false,
   color: "#000000",
+  asMask: false,  // draw solid, or act as an animated shape mask for the grid
 };
 
 function collectSolidElements(container) {
@@ -233,6 +234,50 @@ function solidLayout(w, h) {
   });
 
   return { k, ox0, oy0, scales, dx };
+}
+
+/* Animated mask mode: rasterize the solid SVG's CURRENT pose (pulse scales
+   + displacements) at one pixel per grid cell, every frame. Same occupancy
+   idea as the static shape mask, but it moves with the letters. */
+const solidMaskCv = document.createElement("canvas");
+
+function getSolidMaskMap(w, h, cols, rows, cell, cellH) {
+  if (!(SOLID.asMask && SOLID.elements.length)) return null;
+
+  // Supersample: S×S subpixels per cell. Letterform strokes are thin, so
+  // sampling at 1px/cell dilutes them below any usable threshold — instead
+  // a cell activates when enough of its subpixels carry ink.
+  const S = 4;
+  const oc = solidMaskCv;
+  oc.width = cols * S;   // also clears the canvas
+  oc.height = rows * S;
+  const octx = oc.getContext("2d", { willReadFrequently: true });
+  const { k, ox0, oy0, scales, dx } = solidLayout(w, h);
+  const sx = S / cell, sy = S / cellH;
+  SOLID.elements.forEach((el, i) => {
+    const s = scales[i];
+    const cxp = ox0 + (el.cx + dx[i] - SOLID.vb.minx) * k;
+    const cyp = oy0 + (el.cy - SOLID.vb.miny) * k;
+    const dw = el.bw * k * s, dh = el.bh * k * s;
+    octx.drawImage(el.img, (cxp - dw / 2) * sx, (cyp - dh / 2) * sy, dw * sx, dh * sy);
+  });
+
+  const data = octx.getImageData(0, 0, cols * S, rows * S).data;
+  const map = new Uint8Array(cols * rows);
+  const need = Math.ceil(S * S * 0.12); // active if ≥12% of the cell has ink
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      let hits = 0;
+      for (let v = 0; v < S; v++) {
+        const rowOff = ((j * S + v) * cols * S + i * S) * 4 + 3;
+        for (let u = 0; u < S; u++) {
+          if (data[rowOff + u * 4] >= 80) hits++;
+        }
+      }
+      map[j * cols + i] = hits >= need ? 1 : 0;
+    }
+  }
+  return map;
 }
 
 function drawSolid(w, h) {
@@ -514,8 +559,10 @@ function render() {
 
   const fxState = getFxState(w, h);
 
-  // Shape mask: cells outside the SVG silhouette are skipped entirely
-  const mm = getMaskMap(w, h, cols, rows, cell, cellH);
+  // Shape mask: cells outside the silhouette are skipped entirely.
+  // The animated solid-SVG mask takes precedence over the static file mask.
+  const mm = getSolidMaskMap(w, h, cols, rows, cell, cellH) ||
+             getMaskMap(w, h, cols, rows, cell, cellH);
 
   layers.forEach((ly, li) => {
     if (!ly.visible) return;
@@ -538,7 +585,7 @@ function render() {
     }
   });
 
-  drawSolid(w, h);
+  if (!SOLID.asMask) drawSolid(w, h);
 
   // Effector outlines
   if (G.showFx) {
@@ -919,6 +966,7 @@ $("solidY").addEventListener("input", e => {
   $("v-solidY").textContent = e.target.value + "%";
 });
 $("solidPulse").addEventListener("change", e => SOLID.pulse = e.target.checked);
+$("solidAsMask").addEventListener("change", e => SOLID.asMask = e.target.checked);
 $("solidAmp").addEventListener("input", e => {
   SOLID.amp = parseFloat(e.target.value) / 100;
   $("v-solidAmp").textContent = "+" + e.target.value + "%";
@@ -1081,7 +1129,8 @@ function exportSVG() {
 
   // Shape mask: same per-cell occupancy map as the canvas renderer,
   // so masked-out cells simply don't exist in the exported file
-  const mm = getMaskMap(w, h, cols, rows, cell, cellH);
+  const mm = getSolidMaskMap(w, h, cols, rows, cell, cellH) ||
+             getMaskMap(w, h, cols, rows, cell, cellH);
 
   // One def per shape per layer (ids: s{layer}-{shape index})
   parts.push("<defs>");
@@ -1122,8 +1171,8 @@ function exportSVG() {
   });
 
   // Solid SVG overlay: each element inlined as vectors with its
-  // current pulse scale and displacement
-  if (SOLID.elements.length) {
+  // current pulse scale and displacement (not drawn in mask mode)
+  if (SOLID.elements.length && !SOLID.asMask) {
     const n6 = v => +v.toFixed(6);
     const { k, ox0, oy0, scales, dx } = solidLayout(w, h);
     parts.push(

@@ -1,230 +1,234 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>GRAPHISM — Generative Grid Studio</title>
-<link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Generative Grid Studio</title>
+  <link rel="stylesheet" href="style.css">
 </head>
+
 <body>
 
-<header>
-  <h1>GRAPH<span>ISM</span></h1>
-  <button id="btnPlay" class="primary">⏸ Pause</button>
-  <button id="btnRandom">🎲 Randomize</button>
-  <div class="spacer"></div>
-  <select id="recDur" title="Recording length">
-    <option value="2">2 s</option>
-    <option value="5" selected>5 s</option>
-    <option value="10">10 s</option>
-    <option value="15">15 s</option>
-  </select>
-  <button id="btnRecord">⏺ Record</button>
-  <button id="btnExportPng">⬇ PNG</button>
-  <button id="btnExportSvg">⬇ SVG</button>
-</header>
+  <header>
+    <h1>GRAPH<span>ISM</span></h1>
+    <button id="btnPlay" class="primary">⏸ Pause</button>
+    <button id="btnRandom">🎲 Randomize</button>
+    <div class="spacer"></div>
+    <select id="recDur" title="Recording length">
+      <option value="2">2 s</option>
+      <option value="5" selected>5 s</option>
+      <option value="10">10 s</option>
+      <option value="15">15 s</option>
+    </select>
+    <button id="btnRecord">⏺ Record</button>
+    <button id="btnExportPng">⬇ PNG</button>
+    <button id="btnExportSvg">⬇ SVG</button>
+  </header>
 
-<main>
-  <aside id="sidebar">
+  <main>
+    <aside id="sidebar">
 
-    <details class="section" open>
-      <summary>Canvas</summary>
-      <div class="section-body">
-        <div class="ctl">
-          <label>Aspect ratio</label>
-          <select id="aspect">
-            <option value="1">1 : 1</option>
-            <option value="0.8">4 : 5</option>
-            <option value="0.75">3 : 4</option>
-            <option value="1.7778">16 : 9</option>
-            <option value="0.5625">9 : 16</option>
-            <option value="1.5">3 : 2</option>
-          </select>
-        </div>
-        <div class="ctl">
-          <label>Background</label>
-          <input type="color" id="bgColor" value="#ffffff">
-        </div>
-        <div class="ctl">
-          <label>Columns <span class="val" id="v-cols">18</span></label>
-          <input type="range" id="cols" min="2" max="60" step="1" value="18">
-        </div>
-      </div>
-    </details>
-
-    <details class="section" open>
-      <summary>Shape Mask</summary>
-      <div class="section-body">
-        <button id="uploadMask" style="width:100%; margin-bottom:10px; border-style:dashed; color:var(--text-dim)">⬆ Upload SVG mask</button>
-        <input type="file" id="maskFile" accept=".svg,image/svg+xml" hidden>
-        <p class="hint">Shapes are only generated in the grid cells inside the SVG's outline</p>
-        <div id="maskControls" style="display:none">
-          <p class="hint" id="maskName"></p>
+      <details class="section" open>
+        <summary>Canvas</summary>
+        <div class="section-body">
           <div class="ctl">
-            <label>Mask scale <span class="val" id="v-maskScale">100%</span></label>
-            <input type="range" id="maskScale" min="10" max="300" step="1" value="100">
-          </div>
-          <label class="check"><input type="checkbox" id="maskEnabled" checked> Enable mask</label>
-          <label class="check"><input type="checkbox" id="maskInvert"> Invert (show outside)</label>
-          <label class="check"><input type="checkbox" id="layerMask" checked> Apply to selected layer <span class="lyr-ind"></span></label>
-          <button id="removeMask" class="danger" style="width:100%">✕ Remove mask</button>
-        </div>
-      </div>
-    </details>
-
-    <details class="section" open>
-      <summary>Solid SVG</summary>
-      <div class="section-body">
-        <button id="uploadSolid" style="width:100%; margin-bottom:10px; border-style:dashed; color:var(--text-dim)">⬆ Upload solid SVG</button>
-        <input type="file" id="solidFile" accept=".svg,image/svg+xml" hidden>
-        <p class="hint">Drawn on top of the grid. The pulse travels letter by letter — neighbors slide aside to give the growing element room</p>
-        <div id="solidControls" style="display:none">
-          <p class="hint" id="solidName"></p>
-          <div class="ctl">
-            <label>Size <span class="val" id="v-solidScale">100%</span></label>
-            <input type="range" id="solidScale" min="10" max="300" step="1" value="100">
+            <label>Aspect ratio</label>
+            <select id="aspect">
+              <option value="1">1 : 1</option>
+              <option value="0.8">4 : 5</option>
+              <option value="0.75">3 : 4</option>
+              <option value="1.7778">16 : 9</option>
+              <option value="0.5625">9 : 16</option>
+              <option value="1.5">3 : 2</option>
+            </select>
           </div>
           <div class="ctl">
-            <label>Vertical position <span class="val" id="v-solidY">0%</span></label>
-            <input type="range" id="solidY" min="-50" max="50" step="1" value="0">
-          </div>
-          <label class="check"><input type="checkbox" id="solidPulse" checked> Pulsating motion</label>
-          <div class="ctl">
-            <label>Pulse amount <span class="val" id="v-solidAmp">+60%</span></label>
-            <input type="range" id="solidAmp" min="0" max="150" step="1" value="60">
+            <label>Background</label>
+            <input type="color" id="bgColor" value="#ffffff">
           </div>
           <div class="ctl">
-            <label>Pulse speed <span class="val" id="v-solidSpeed">1.00 l/s</span></label>
-            <input type="range" id="solidSpeed" min="0.1" max="4" step="0.05" value="1">
+            <label>Columns <span class="val" id="v-cols">18</span></label>
+            <input type="range" id="cols" min="2" max="60" step="1" value="18">
           </div>
-          <label class="check"><input type="checkbox" id="solidRecolor"> Recolor</label>
+        </div>
+      </details>
+
+      <details class="section" open>
+        <summary>Shape Mask</summary>
+        <div class="section-body">
+          <button id="uploadMask" style="width:100%; margin-bottom:10px; border-style:dashed; color:var(--text-dim)">⬆ Upload SVG mask</button>
+          <input type="file" id="maskFile" accept=".svg,image/svg+xml" hidden>
+          <p class="hint">Shapes are only generated in the grid cells inside the SVG's outline</p>
+          <div id="maskControls" style="display:none">
+            <p class="hint" id="maskName"></p>
+            <div class="ctl">
+              <label>Mask scale <span class="val" id="v-maskScale">100%</span></label>
+              <input type="range" id="maskScale" min="10" max="300" step="1" value="100">
+            </div>
+            <label class="check"><input type="checkbox" id="maskEnabled" checked> Enable mask</label>
+            <label class="check"><input type="checkbox" id="maskInvert"> Invert (show outside)</label>
+            <label class="check"><input type="checkbox" id="layerMask" checked> Apply to selected layer <span class="lyr-ind"></span></label>
+            <button id="removeMask" class="danger" style="width:100%">✕ Remove mask</button>
+          </div>
+        </div>
+      </details>
+
+      <details class="section" open>
+        <summary>Solid SVG</summary>
+        <div class="section-body">
+          <button id="uploadSolid" style="width:100%; margin-bottom:10px; border-style:dashed; color:var(--text-dim)">⬆ Upload solid SVG</button>
+          <input type="file" id="solidFile" accept=".svg,image/svg+xml" hidden>
+          <p class="hint">Drawn on top of the grid. The pulse travels letter by letter — neighbors slide aside to give the growing element room</p>
+          <div id="solidControls" style="display:none">
+            <p class="hint" id="solidName"></p>
+            <label class="check"><input type="checkbox" id="solidAsMask"> Use as grid canvas (animated mask)</label>
+            <div class="ctl">
+              <label>Size <span class="val" id="v-solidScale">100%</span></label>
+              <input type="range" id="solidScale" min="10" max="300" step="1" value="100">
+            </div>
+            <div class="ctl">
+              <label>Vertical position <span class="val" id="v-solidY">0%</span></label>
+              <input type="range" id="solidY" min="-50" max="50" step="1" value="0">
+            </div>
+            <label class="check"><input type="checkbox" id="solidPulse" checked> Pulsating motion</label>
+            <div class="ctl">
+              <label>Pulse amount <span class="val" id="v-solidAmp">+60%</span></label>
+              <input type="range" id="solidAmp" min="0" max="150" step="1" value="60">
+            </div>
+            <div class="ctl">
+              <label>Pulse speed <span class="val" id="v-solidSpeed">1.00 l/s</span></label>
+              <input type="range" id="solidSpeed" min="0.1" max="4" step="0.05" value="1">
+            </div>
+            <label class="check"><input type="checkbox" id="solidRecolor"> Recolor</label>
+            <div class="ctl">
+              <label>Color</label>
+              <input type="color" id="solidColor" value="#000000">
+            </div>
+            <button id="removeSolid" class="danger" style="width:100%">✕ Remove solid SVG</button>
+          </div>
+        </div>
+      </details>
+
+      <details class="section" open>
+        <summary>Layers</summary>
+        <div class="section-body">
+          <div id="layerList"></div>
+          <button id="addLayer" style="width:100%; margin-bottom:12px; border-style:dashed; color:var(--text-dim)">＋ Add layer</button>
           <div class="ctl">
-            <label>Color</label>
-            <input type="color" id="solidColor" value="#000000">
+            <label>Layer color</label>
+            <input type="color" id="fgColor" value="#000000">
           </div>
-          <button id="removeSolid" class="danger" style="width:100%">✕ Remove solid SVG</button>
+          <p class="hint">The sections below edit the selected layer</p>
         </div>
-      </div>
-    </details>
+      </details>
 
-    <details class="section" open>
-      <summary>Layers</summary>
-      <div class="section-body">
-        <div id="layerList"></div>
-        <button id="addLayer" style="width:100%; margin-bottom:12px; border-style:dashed; color:var(--text-dim)">＋ Add layer</button>
-        <div class="ctl">
-          <label>Layer color</label>
-          <input type="color" id="fgColor" value="#000000">
+      <details class="section" open>
+        <summary>Shape <span class="lyr-ind"></span></summary>
+        <div class="section-body">
+          <div class="seg" id="shapePicker"></div>
+          <p class="hint">Ctrl+click to combine shapes — the mix is placed randomly across the grid</p>
+          <button id="uploadSvg" style="width:100%; margin-bottom:10px; border-style:dashed; color:var(--text-dim)">⬆ Upload custom SVG</button>
+          <input type="file" id="svgFile" accept=".svg,image/svg+xml" multiple hidden>
+          <label class="check"><input type="checkbox" id="tintSvg" checked> Recolor SVG with shape color</label>
+          <div class="ctl">
+            <label>Shape scale <span class="val" id="v-shapeScale">100%</span></label>
+            <input type="range" id="shapeScale" min="20" max="150" step="1" value="100">
+          </div>
+          <div class="ctl">
+            <label>Cell padding <span class="val" id="v-pad">0%</span></label>
+            <input type="range" id="pad" min="0" max="40" step="1" value="0">
+          </div>
+          <label class="check"><input type="checkbox" id="checker"> Checkerboard flip</label>
         </div>
-        <p class="hint">The sections below edit the selected layer</p>
-      </div>
-    </details>
+      </details>
 
-    <details class="section" open>
-      <summary>Shape <span class="lyr-ind"></span></summary>
-      <div class="section-body">
-        <div class="seg" id="shapePicker"></div>
-        <p class="hint">Ctrl+click to combine shapes — the mix is placed randomly across the grid</p>
-        <button id="uploadSvg" style="width:100%; margin-bottom:10px; border-style:dashed; color:var(--text-dim)">⬆ Upload custom SVG</button>
-        <input type="file" id="svgFile" accept=".svg,image/svg+xml" multiple hidden>
-        <label class="check"><input type="checkbox" id="tintSvg" checked> Recolor SVG with shape color</label>
-        <div class="ctl">
-          <label>Shape scale <span class="val" id="v-shapeScale">100%</span></label>
-          <input type="range" id="shapeScale" min="20" max="150" step="1" value="100">
+      <details class="section" open>
+        <summary>Motion <span class="lyr-ind"></span></summary>
+        <div class="section-body">
+          <div class="ctl">
+            <label>Speed <span class="val" id="v-speed">0.25</span></label>
+            <input type="range" id="speed" min="0" max="2" step="0.01" value="0.25">
+          </div>
+          <div class="ctl">
+            <label>Movement pattern</label>
+            <select id="wave">
+              <option value="spin">Spin (continuous)</option>
+              <option value="sine" selected>Sine (back & forth)</option>
+              <option value="pingpong">Ping-pong (linear)</option>
+              <option value="step">Step (snap)</option>
+              <option value="pulse">Pulse (heartbeat)</option>
+            </select>
+          </div>
+          <div class="ctl">
+            <label>Rotation amount <span class="val" id="v-rot">0.50 turn</span></label>
+            <input type="range" id="rot" min="0" max="2" step="0.01" value="0.5">
+          </div>
+          <div class="ctl">
+            <label>Scale pulse <span class="val" id="v-scaleAmt">0%</span></label>
+            <input type="range" id="scaleAmt" min="0" max="100" step="1" value="0">
+          </div>
+          <div class="ctl">
+            <label>Quantize rotation</label>
+            <select id="quant">
+              <option value="0" selected>Off (smooth)</option>
+              <option value="4">90° steps</option>
+              <option value="2">180° steps</option>
+              <option value="8">45° steps</option>
+            </select>
+          </div>
         </div>
-        <div class="ctl">
-          <label>Cell padding <span class="val" id="v-pad">0%</span></label>
-          <input type="range" id="pad" min="0" max="40" step="1" value="0">
-        </div>
-        <label class="check"><input type="checkbox" id="checker"> Checkerboard flip</label>
-      </div>
-    </details>
+      </details>
 
-    <details class="section" open>
-      <summary>Motion <span class="lyr-ind"></span></summary>
-      <div class="section-body">
-        <div class="ctl">
-          <label>Speed <span class="val" id="v-speed">0.25</span></label>
-          <input type="range" id="speed" min="0" max="2" step="0.01" value="0.25">
+      <details class="section" open>
+        <summary>Delay / Wave <span class="lyr-ind"></span></summary>
+        <div class="section-body">
+          <div class="ctl">
+            <label>Delay pattern</label>
+            <select id="delayPattern">
+              <option value="linearX">Linear → X</option>
+              <option value="linearY">Linear ↓ Y</option>
+              <option value="diagonal" selected>Diagonal</option>
+              <option value="radial">Radial (center)</option>
+              <option value="spiral">Spiral</option>
+              <option value="checker">Checker</option>
+              <option value="random">Random</option>
+            </select>
+          </div>
+          <div class="ctl">
+            <label>Delay amount <span class="val" id="v-delayAmt">1.00 cycle</span></label>
+            <input type="range" id="delayAmt" min="0" max="4" step="0.05" value="1">
+          </div>
+          <label class="check"><input type="checkbox" id="mirrorDelay"> Mirror pattern</label>
         </div>
-        <div class="ctl">
-          <label>Movement pattern</label>
-          <select id="wave">
-            <option value="spin">Spin (continuous)</option>
-            <option value="sine" selected>Sine (back & forth)</option>
-            <option value="pingpong">Ping-pong (linear)</option>
-            <option value="step">Step (snap)</option>
-            <option value="pulse">Pulse (heartbeat)</option>
-          </select>
-        </div>
-        <div class="ctl">
-          <label>Rotation amount <span class="val" id="v-rot">0.50 turn</span></label>
-          <input type="range" id="rot" min="0" max="2" step="0.01" value="0.5">
-        </div>
-        <div class="ctl">
-          <label>Scale pulse <span class="val" id="v-scaleAmt">0%</span></label>
-          <input type="range" id="scaleAmt" min="0" max="100" step="1" value="0">
-        </div>
-        <div class="ctl">
-          <label>Quantize rotation</label>
-          <select id="quant">
-            <option value="0" selected>Off (smooth)</option>
-            <option value="4">90° steps</option>
-            <option value="2">180° steps</option>
-            <option value="8">45° steps</option>
-          </select>
-        </div>
-      </div>
-    </details>
+      </details>
 
-    <details class="section" open>
-      <summary>Delay / Wave <span class="lyr-ind"></span></summary>
-      <div class="section-body">
-        <div class="ctl">
-          <label>Delay pattern</label>
-          <select id="delayPattern">
-            <option value="linearX">Linear → X</option>
-            <option value="linearY">Linear ↓ Y</option>
-            <option value="diagonal" selected>Diagonal</option>
-            <option value="radial">Radial (center)</option>
-            <option value="spiral">Spiral</option>
-            <option value="checker">Checker</option>
-            <option value="random">Random</option>
-          </select>
+      <details class="section" open>
+        <summary>Effectors</summary>
+        <div class="section-body">
+          <label class="check"><input type="checkbox" id="showFx" checked> Show effector outlines</label>
+          <div id="fxList"></div>
+          <button id="addEffector">＋ Add effector</button>
         </div>
-        <div class="ctl">
-          <label>Delay amount <span class="val" id="v-delayAmt">1.00 cycle</span></label>
-          <input type="range" id="delayAmt" min="0" max="4" step="0.05" value="1">
-        </div>
-        <label class="check"><input type="checkbox" id="mirrorDelay"> Mirror pattern</label>
-      </div>
-    </details>
+      </details>
 
-    <details class="section" open>
-      <summary>Effectors</summary>
-      <div class="section-body">
-        <label class="check"><input type="checkbox" id="showFx" checked> Show effector outlines</label>
-        <div id="fxList"></div>
-        <button id="addEffector">＋ Add effector</button>
-      </div>
-    </details>
+    </aside>
 
-  </aside>
+    <div id="stage">
+      <div id="canvasWrap"><canvas id="cv"></canvas></div>
+    </div>
+  </main>
 
-  <div id="stage">
-    <div id="canvasWrap"><canvas id="cv"></canvas></div>
-  </div>
-</main>
+  <footer>
+    <span><kbd>Space</kbd> play / pause</span>
+    <span><kbd>R</kbd> randomize</span>
+    <span><kbd>E</kbd> export PNG</span>
+    <span><kbd>S</kbd> export SVG</span>
+    <div class="spacer"></div>
+    <span id="fps"></span>
+  </footer>
 
-<footer>
-  <span><kbd>Space</kbd> play / pause</span>
-  <span><kbd>R</kbd> randomize</span>
-  <span><kbd>E</kbd> export PNG</span>
-  <span><kbd>S</kbd> export SVG</span>
-  <div class="spacer"></div>
-  <span id="fps"></span>
-</footer>
-
-<script src="app.js"></script>
+  <script src="app.js"></script>
 </body>
+
 </html>
