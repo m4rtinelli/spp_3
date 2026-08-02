@@ -229,6 +229,9 @@ input[type=color] {
   flex: 0 0 auto;
 }
 .layer-row .layer-name { flex: 1; font-size: 12px; font-weight: 600; }
+.layer-row button.small { padding: 3px 6px; font-size: 10px; }
+.layer-row button:disabled { opacity: .3; cursor: default; }
+.layer-row button:disabled:hover { background: var(--panel-2); border-color: var(--border); }
 .lyr-ind {
   margin-left: 6px;
   padding: 1px 6px;

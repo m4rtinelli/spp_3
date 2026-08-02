@@ -98,7 +98,8 @@ const SOLID = {
   speed: 1,       // letters per second
   recolor: false,
   color: "#000000",
-  asMask: false,  // draw solid, or act as an animated shape mask for the grid
+  asMask: false,     // draw solid, or act as an animated shape mask for the grid
+  mode: "sequence",  // sequence = letter by letter | together = whole SVG
 };
 
 function collectSolidElements(container) {
@@ -208,13 +209,21 @@ function solidLayout(w, h) {
   // Shared by canvas + SVG export: overall fit, per-element pulse scales
   // and the sideways displacement that makes room for the scaled element
   const S = SOLID, vb = S.vb;
-  const k = Math.min(w / vb.vw, h / vb.vh) * S.scale;
-  const ox0 = (w - vb.vw * k) / 2;
-  const oy0 = (h - vb.vh * k) / 2 + S.posY * h;
   const N = S.elements.length;
 
+  // "together" mode scales the whole composition, so the pulse folds
+  // into the global fit factor and needs no per-element displacement
+  let whole = 1;
+  if (S.pulse && S.mode === "together") {
+    whole = 1 + S.amp * (Math.sin(time * S.speed * Math.PI * 2) * 0.5 + 0.5);
+  }
+
+  const k = Math.min(w / vb.vw, h / vb.vh) * S.scale * whole;
+  const ox0 = (w - vb.vw * k) / 2;
+  const oy0 = (h - vb.vh * k) / 2 + S.posY * h;
+
   const scales = S.elements.map((_, i) => {
-    if (!S.pulse || N === 0) return 1;
+    if (!S.pulse || S.mode === "together" || N === 0) return 1;
     const p = (time * S.speed) % N;
     let d = Math.abs(p - (i + 0.5));
     d = Math.min(d, N - d); // wrap around
@@ -692,12 +701,23 @@ function syncLayerUI() {
   $("layerMask").checked = ly.useMask;
   updateShapeButtons();
   document.querySelectorAll(".lyr-ind").forEach(el =>
-    el.textContent = "L" + (activeLayer + 1));
+    el.textContent = "L" + ly.id);
 }
 
 /* ═══════════════════════ Layer list UI ═══════════════════════ */
 
 const layerList = $("layerList");
+
+function moveLayer(idx, dir) {
+  const to = idx + dir;
+  if (to < 0 || to >= layers.length) return;
+  [layers[idx], layers[to]] = [layers[to], layers[idx]];
+  // Keep the selection on the same layer it was on
+  if (activeLayer === idx) activeLayer = to;
+  else if (activeLayer === to) activeLayer = idx;
+  buildLayerUI();
+  syncLayerUI();
+}
 
 function buildLayerUI() {
   layerList.innerHTML = "";
@@ -713,7 +733,21 @@ function buildLayerUI() {
 
     const name = document.createElement("span");
     name.className = "layer-name";
-    name.textContent = "Layer " + (idx + 1);
+    name.textContent = "Layer " + ly.id;
+
+    const btnUp = document.createElement("button");
+    btnUp.className = "small";
+    btnUp.textContent = "▲";
+    btnUp.title = "Move down in the stack (draws earlier)";
+    btnUp.disabled = idx === 0;
+    btnUp.addEventListener("click", e => { e.stopPropagation(); moveLayer(idx, -1); });
+
+    const btnDown = document.createElement("button");
+    btnDown.className = "small";
+    btnDown.textContent = "▼";
+    btnDown.title = "Move up in the stack (draws later, on top)";
+    btnDown.disabled = idx === layers.length - 1;
+    btnDown.addEventListener("click", e => { e.stopPropagation(); moveLayer(idx, 1); });
 
     const btnVis = document.createElement("button");
     btnVis.className = "small";
@@ -725,7 +759,7 @@ function buildLayerUI() {
       buildLayerUI();
     });
 
-    row.append(sw, name, btnVis);
+    row.append(sw, name, btnUp, btnDown, btnVis);
 
     if (layers.length > 1) {
       const btnDel = document.createElement("button");
@@ -967,13 +1001,20 @@ $("solidY").addEventListener("input", e => {
 });
 $("solidPulse").addEventListener("change", e => SOLID.pulse = e.target.checked);
 $("solidAsMask").addEventListener("change", e => SOLID.asMask = e.target.checked);
+$("solidMode").addEventListener("change", e => {
+  SOLID.mode = e.target.value;
+  // The speed slider means letters/sec in sequence mode, cycles/sec together
+  $("v-solidSpeed").textContent =
+    SOLID.speed.toFixed(2) + (SOLID.mode === "together" ? " Hz" : " l/s");
+});
 $("solidAmp").addEventListener("input", e => {
   SOLID.amp = parseFloat(e.target.value) / 100;
   $("v-solidAmp").textContent = "+" + e.target.value + "%";
 });
 $("solidSpeed").addEventListener("input", e => {
   SOLID.speed = parseFloat(e.target.value);
-  $("v-solidSpeed").textContent = SOLID.speed.toFixed(2) + " l/s";
+  $("v-solidSpeed").textContent =
+    SOLID.speed.toFixed(2) + (SOLID.mode === "together" ? " Hz" : " l/s");
 });
 $("solidRecolor").addEventListener("change", e => SOLID.recolor = e.target.checked);
 $("solidColor").addEventListener("input", e => SOLID.color = e.target.value);

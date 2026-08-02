@@ -93,6 +93,13 @@
             </div>
             <label class="check"><input type="checkbox" id="solidPulse" checked> Pulsating motion</label>
             <div class="ctl">
+              <label>Pulse mode</label>
+              <select id="solidMode">
+                <option value="sequence" selected>Letter by letter</option>
+                <option value="together">Whole SVG together</option>
+              </select>
+            </div>
+            <div class="ctl">
               <label>Pulse amount <span class="val" id="v-solidAmp">+60%</span></label>
               <input type="range" id="solidAmp" min="0" max="150" step="1" value="60">
             </div>
@@ -119,7 +126,7 @@
             <label>Layer color</label>
             <input type="color" id="fgColor" value="#000000">
           </div>
-          <p class="hint">The sections below edit the selected layer</p>
+          <p class="hint">▲▼ reorder the stack — layers lower in the list draw on top. The sections below edit the selected layer</p>
         </div>
       </details>
 
